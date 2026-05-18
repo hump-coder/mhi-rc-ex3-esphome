@@ -15,7 +15,7 @@ esphome:
   friendly_name: MHI RC-EX3
 
 esp32:
-  board: esp32dev
+  board: lolin_s2_mini
   framework:
     type: arduino
 

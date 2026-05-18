@@ -2,7 +2,6 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import climate, uart, sensor
 from esphome.const import (
-    CONF_ID,
     DEVICE_CLASS_TEMPERATURE,
     STATE_CLASS_MEASUREMENT,
     UNIT_CELSIUS,
@@ -31,9 +30,9 @@ CONF_INDOOR_FAN_SPEED = "indoor_fan_speed"
 CONF_OUTDOOR_FAN_SPEED = "outdoor_fan_speed"
 
 CONFIG_SCHEMA = (
-    climate.CLIMATE_SCHEMA.extend(
+    climate.climate_schema(RcEx3Climate)
+    .extend(
         {
-            cv.GenerateID(): cv.declare_id(RcEx3Climate),
             cv.Optional(CONF_INDOOR_TEMPERATURE): sensor.sensor_schema(
                 unit_of_measurement=UNIT_CELSIUS,
                 accuracy_decimals=1,
@@ -82,10 +81,9 @@ CONFIG_SCHEMA = (
 
 
 async def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
+    var = await climate.new_climate(config)
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
-    await climate.register_climate(var, config)
 
     if CONF_INDOOR_TEMPERATURE in config:
         sens = await sensor.new_sensor(config[CONF_INDOOR_TEMPERATURE])

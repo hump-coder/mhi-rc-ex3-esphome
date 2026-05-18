@@ -1,3 +1,7 @@
+# ESPHome
+secrets.yaml
+.esphome/
+
 # Prerequisites
 *.d
 
@@ -22,7 +26,6 @@
 *.dylib
 *.dll
 *.so.*
-
 
 # Fortran module files
 *.mod

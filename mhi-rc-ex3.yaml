@@ -1,0 +1,105 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MHI RC-EX3 ESPHome Integration
+#
+# Hardware wiring (4 wires into the RC-EX3 panel through-hole vias):
+#   Panel VCC  → ESP32 3.3 V (use a 3.3 V buck converter, NOT a linear reg)
+#   Panel GND  → ESP32 GND
+#   Panel TX   → ESP32 GPIO16  (UART2 RX)
+#   Panel RX   → ESP32 GPIO17  (UART2 TX)
+#
+# Serial parameters: 38400 baud, 8 data bits, Even parity, 1 stop bit (8E1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+esphome:
+  name: mhi-rc-ex3
+  friendly_name: MHI RC-EX3
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# ── Credentials ──────────────────────────────────────────────────────────────
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "MHI-RC-EX3 Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logger:
+  # UART0 is the default logger port; RC-EX3 uses UART2 (GPIO16/17) so there
+  # is no conflict. Set level to DEBUG while commissioning, then WARN in prod.
+  level: DEBUG
+
+# ── Home Assistant API ───────────────────────────────────────────────────────
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# ── OTA ──────────────────────────────────────────────────────────────────────
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# ── Time (for HA clock sync) ─────────────────────────────────────────────────
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ── External component (fetched from GitHub at compile time) ─────────────────
+external_components:
+  - source:
+      type: git
+      url: https://github.com/hump-coder/mhi-rc-ex3-esphome
+      ref: main
+    components: [rc_ex3]
+
+# ── UART to RC-EX3 panel ─────────────────────────────────────────────────────
+uart:
+  id: rc_ex3_uart
+  rx_pin: GPIO16
+  tx_pin: GPIO17
+  baud_rate: 38400
+  parity: EVEN
+  stop_bits: 1
+  data_bits: 8
+
+# ── Climate entity ────────────────────────────────────────────────────────────
+climate:
+  - platform: rc_ex3
+    name: "Living Room AC"
+    uart_id: rc_ex3_uart
+    update_interval: 30s
+
+    # ── Diagnostic sensors (all optional – remove any you don't need) ─────────
+    indoor_temperature:
+      name: "AC Indoor Temperature"
+      id: ac_indoor_temp
+
+    outdoor_temperature:
+      name: "AC Outdoor Temperature"
+      id: ac_outdoor_temp
+
+    return_air_temperature:
+      name: "AC Return Air Temperature"
+      id: ac_return_air_temp
+
+    compressor_frequency:
+      name: "AC Compressor Frequency"
+      id: ac_compressor_hz
+
+    compressor_hours:
+      name: "AC Compressor Hours"
+      id: ac_compressor_hours
+
+    indoor_fan_speed:
+      name: "AC Indoor Fan Speed (raw)"
+      id: ac_indoor_fan
+
+    outdoor_fan_speed:
+      name: "AC Outdoor Fan Speed (raw)"
+      id: ac_outdoor_fan

@@ -15,7 +15,7 @@ esphome:
   friendly_name: MHI RC-EX3
 
 esp32:
-  board: lolin_s2_mini
+  board: esp32-s2-saola-1
   framework:
     type: arduino
 
@@ -92,14 +92,6 @@ climate:
       name: "AC Compressor Frequency"
       id: ac_compressor_hz
 
-    compressor_hours:
-      name: "AC Compressor Hours"
-      id: ac_compressor_hours
-
     indoor_fan_speed:
       name: "AC Indoor Fan Speed (raw)"
       id: ac_indoor_fan
-
-    outdoor_fan_speed:
-      name: "AC Outdoor Fan Speed (raw)"
-      id: ac_outdoor_fan

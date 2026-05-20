@@ -209,9 +209,6 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
            data[idx(POS_INDOOR_AIR_TEMP)], data[idx(POS_OUTDOOR_AIR_TEMP)], data[idx(POS_RETURN_AIR_TEMP)]);
   uint8_t comp_hz    = data[idx(POS_COMPRESSOR_HZ)];
   uint8_t in_fan     = data[idx(POS_INDOOR_FAN_SPEED)];
-  uint8_t out_fan    = data[idx(POS_OUTDOOR_FAN_SPEED)];
-  uint16_t comp_hrs  = (static_cast<uint16_t>(data[idx(POS_COMPRESSOR_HOURS_MSB)]) << 8 |
-                        static_cast<uint16_t>(data[idx(POS_COMPRESSOR_HOURS_LSB)])) * 100;
 
   // Update current_temperature from indoor sensor and republish climate state
   this->current_temperature = indoor_air;
@@ -221,9 +218,7 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   if (outdoor_temperature_sensor_)   outdoor_temperature_sensor_->publish_state(outdoor_air);
   if (return_air_temperature_sensor_) return_air_temperature_sensor_->publish_state(return_air);
   if (compressor_frequency_sensor_)  compressor_frequency_sensor_->publish_state(comp_hz);
-  if (compressor_hours_sensor_)      compressor_hours_sensor_->publish_state(comp_hrs);
   if (indoor_fan_speed_sensor_)      indoor_fan_speed_sensor_->publish_state(in_fan);
-  if (outdoor_fan_speed_sensor_)     outdoor_fan_speed_sensor_->publish_state(out_fan);
 }
 
 // ─── Packet send helpers ─────────────────────────────────────────────────────

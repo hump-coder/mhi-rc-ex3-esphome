@@ -16,12 +16,7 @@ static const uint8_t POS_TARGET_TEMP      = 7;
 static const uint8_t POS_OUTDOOR_AIR_TEMP = 26;
 static const uint8_t POS_RETURN_AIR_TEMP  = 27;
 static const uint8_t POS_COMPRESSOR_HZ    = 32;
-static const uint8_t POS_OUTDOOR_FAN_SPEED = 32;
 static const uint8_t POS_INDOOR_FAN_SPEED  = 45;
-static const uint8_t POS_EEV_OPENING_MSB   = 46;
-static const uint8_t POS_EEV_OPENING_LSB   = 47;
-static const uint8_t POS_COMPRESSOR_HOURS_MSB = 44;
-static const uint8_t POS_COMPRESSOR_HOURS_LSB = 45;
 static const uint8_t POS_CURRENT          = 42;
 
 struct HvacData {
@@ -32,9 +27,6 @@ struct HvacData {
   uint8_t  operation_mode;
   uint8_t  compressor_hz;
   uint8_t  indoor_fan_speed;
-  uint8_t  outdoor_fan_speed;
-  uint16_t compressor_hours;
-  uint16_t eev_opening;
   int8_t   current;
   bool     valid;
 };
@@ -60,9 +52,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   void set_outdoor_temperature_sensor(sensor::Sensor *s)  { outdoor_temperature_sensor_  = s; }
   void set_return_air_temperature_sensor(sensor::Sensor *s){ return_air_temperature_sensor_ = s; }
   void set_compressor_frequency_sensor(sensor::Sensor *s) { compressor_frequency_sensor_ = s; }
-  void set_compressor_hours_sensor(sensor::Sensor *s)     { compressor_hours_sensor_     = s; }
   void set_indoor_fan_speed_sensor(sensor::Sensor *s)     { indoor_fan_speed_sensor_     = s; }
-  void set_outdoor_fan_speed_sensor(sensor::Sensor *s)    { outdoor_fan_speed_sensor_    = s; }
 
  protected:
   void send_command(const char *payload, size_t len);
@@ -94,9 +84,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};
   sensor::Sensor *return_air_temperature_sensor_{nullptr};
   sensor::Sensor *compressor_frequency_sensor_  {nullptr};
-  sensor::Sensor *compressor_hours_sensor_      {nullptr};
   sensor::Sensor *indoor_fan_speed_sensor_      {nullptr};
-  sensor::Sensor *outdoor_fan_speed_sensor_     {nullptr};
 };
 
 }  // namespace rc_ex3

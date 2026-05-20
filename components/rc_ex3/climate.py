@@ -6,7 +6,6 @@ from esphome.const import (
     STATE_CLASS_MEASUREMENT,
     UNIT_CELSIUS,
     UNIT_HERTZ,
-    UNIT_HOUR,
 )
 
 from . import rc_ex3_ns
@@ -25,9 +24,7 @@ CONF_INDOOR_TEMPERATURE  = "indoor_temperature"
 CONF_OUTDOOR_TEMPERATURE = "outdoor_temperature"
 CONF_RETURN_AIR_TEMPERATURE = "return_air_temperature"
 CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
-CONF_COMPRESSOR_HOURS = "compressor_hours"
 CONF_INDOOR_FAN_SPEED = "indoor_fan_speed"
-CONF_OUTDOOR_FAN_SPEED = "outdoor_fan_speed"
 
 CONFIG_SCHEMA = (
     climate.climate_schema(RcEx3Climate)
@@ -57,18 +54,7 @@ CONFIG_SCHEMA = (
                 icon="mdi:sine-wave",
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
-            cv.Optional(CONF_COMPRESSOR_HOURS): sensor.sensor_schema(
-                unit_of_measurement=UNIT_HOUR,
-                accuracy_decimals=0,
-                icon="mdi:clock-outline",
-                state_class=STATE_CLASS_MEASUREMENT,
-            ),
             cv.Optional(CONF_INDOOR_FAN_SPEED): sensor.sensor_schema(
-                accuracy_decimals=0,
-                icon="mdi:fan",
-                state_class=STATE_CLASS_MEASUREMENT,
-            ),
-            cv.Optional(CONF_OUTDOOR_FAN_SPEED): sensor.sensor_schema(
                 accuracy_decimals=0,
                 icon="mdi:fan",
                 state_class=STATE_CLASS_MEASUREMENT,
@@ -101,14 +87,6 @@ async def to_code(config):
         sens = await sensor.new_sensor(config[CONF_COMPRESSOR_FREQUENCY])
         cg.add(var.set_compressor_frequency_sensor(sens))
 
-    if CONF_COMPRESSOR_HOURS in config:
-        sens = await sensor.new_sensor(config[CONF_COMPRESSOR_HOURS])
-        cg.add(var.set_compressor_hours_sensor(sens))
-
     if CONF_INDOOR_FAN_SPEED in config:
         sens = await sensor.new_sensor(config[CONF_INDOOR_FAN_SPEED])
         cg.add(var.set_indoor_fan_speed_sensor(sens))
-
-    if CONF_OUTDOOR_FAN_SPEED in config:
-        sens = await sensor.new_sensor(config[CONF_OUTDOOR_FAN_SPEED])
-        cg.add(var.set_outdoor_fan_speed_sensor(sens))

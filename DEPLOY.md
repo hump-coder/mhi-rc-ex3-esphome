@@ -3,10 +3,10 @@
 ## Prerequisites
 
 - Home Assistant with the **ESPHome add-on** installed (Add-on Store → ESPHome)
-- ESP32-WROOM-32 (or compatible ESP32 dev board)
+- **LOLIN/Wemos S2 Mini** (ESP32-S2) — this is the board the YAML is configured for
 - 3.3 V buck converter (e.g. MP1584 module) — do **not** use a linear regulator; the panel draws too much current
 - 4 dupont/jumper wires
-- USB cable for first flash
+- USB-C cable for first flash (the S2 Mini uses USB-C)
 
 ---
 
@@ -63,15 +63,21 @@ Paste the output as the `api_encryption_key` value.
 
 ## 4. First Flash (USB)
 
-The very first flash must be via USB — connect the ESP32 to the machine running HA (or use a laptop with ESPHome CLI if HA is on a remote server).
+The very first flash must be via USB. The S2 Mini has **native USB** (no USB-to-UART chip), so you must put it into DFU (download) mode manually:
 
-In the ESPHome dashboard, click **Install** on the device card, then choose **Plug into this computer** (if HA has USB access) or **Manual download** to get the `.bin` and flash it with the [ESPHome Web Flasher](https://web.esphome.io) from any browser.
+1. Hold the **BOOT** button on the S2 Mini
+2. While holding BOOT, plug the USB-C cable into the board and your computer
+3. Release BOOT — the board is now in DFU mode and will appear as a USB device
 
-ESPHome will compile the firmware (~2–3 minutes first time, the component code is fetched automatically from GitHub) and flash the device.
+In the ESPHome dashboard, click **Install** on the device card, then choose **Manual download** to get the `.bin`, then flash it with the [ESPHome Web Flasher](https://web.esphome.io) from Chrome or Edge (other browsers don't support WebSerial).
+
+ESPHome will compile the firmware (~2–3 minutes first time, the component code is fetched automatically from GitHub) and prompt you to flash.
+
+> **After the first flash**: the S2 Mini reboots into normal mode on its own. All subsequent updates are OTA — you never need DFU mode again unless the device is completely bricked.
 
 ---
 
-## 4. Verify Serial Communication
+## 5. Verify Serial Communication
 
 Once booted and connected to WiFi, watch the log for these lines:
 
@@ -88,7 +94,7 @@ If you see nothing from `rc_ex3` after 60 seconds:
 
 ---
 
-## 5. Add to Home Assistant
+## 6. Add to Home Assistant
 
 1. In Home Assistant go to **Settings → Devices & Services → Add Integration**
 2. Search for **ESPHome**
@@ -101,13 +107,13 @@ Home Assistant will discover:
 
 ---
 
-## 6. Subsequent Updates (OTA)
+## 7. Subsequent Updates (OTA)
 
 After the first USB flash, all future updates are wireless. In the ESPHome dashboard, click **Install → Wirelessly** on the device card. No USB connection needed.
 
 ---
 
-## 7. Reduce Log Verbosity in Production
+## 8. Reduce Log Verbosity in Production
 
 Once everything is confirmed working, edit the device in the ESPHome dashboard and change:
 
@@ -120,7 +126,7 @@ Then **Install → Wirelessly** to apply.
 
 ---
 
-## 8. Fallback / Recovery
+## 9. Fallback / Recovery
 
 If the device loses WiFi or OTA fails, it will broadcast a fallback access point:
 

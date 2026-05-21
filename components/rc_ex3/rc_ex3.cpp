@@ -103,6 +103,9 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
     "RSSL13FF0001%.2x02%.2x03%.2x04FF0503%.2x06FF0FFF43FF",
     power, mode, fan, temp_wire);
 
+  ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C) payload=%s",
+           power, mode, fan, temp_wire, this->target_temperature, buf);
+
   send_command(buf, len);
   this->publish_state();
 }
@@ -185,7 +188,7 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   climate::ClimateMode new_mode = is_on ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
   climate::ClimateFanMode new_fan = wire_to_fan_mode(fan_c);
 
-  ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
+  ESP_LOGI(TAG, "rx ← power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
 
   this->mode             = new_mode;
   this->fan_mode         = new_fan;

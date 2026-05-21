@@ -69,6 +69,13 @@ void RcEx3Climate::loop() {
     }
   }
 
+  // Fire op_data once 10 s after startup regardless of yaml op_data_interval setting.
+  if (!op_data_ever_requested_ && millis() >= 10000) {
+    op_data_pending_        = true;
+    op_data_ever_requested_ = true;
+    last_op_data_ms_        = millis();
+  }
+
   // Send the operational data request once the status has been received,
   // keeping the two transactions separated by one loop tick.
   if (op_data_pending_) {
@@ -212,10 +219,9 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
 
   if (op_data_interval_ms_ > 0) {
     uint32_t now = millis();
-    if (!op_data_ever_requested_ || (now - last_op_data_ms_) >= op_data_interval_ms_) {
-      op_data_pending_        = true;
-      op_data_ever_requested_ = true;
-      last_op_data_ms_        = now;
+    if (op_data_ever_requested_ && (now - last_op_data_ms_) >= op_data_interval_ms_) {
+      op_data_pending_  = true;
+      last_op_data_ms_  = now;
     }
   }
 }

@@ -20,10 +20,8 @@ climate::ClimateTraits RcEx3Climate::traits() {
   });
   traits.set_supported_fan_modes({
     climate::CLIMATE_FAN_AUTO,
-    climate::CLIMATE_FAN_LOW,
-    climate::CLIMATE_FAN_MEDIUM,
-    climate::CLIMATE_FAN_HIGH,
   });
+  traits.set_supported_custom_fan_modes({"1", "2", "3", "4"});
   traits.set_visual_min_temperature(16.0f);
   traits.set_visual_max_temperature(30.0f);
   traits.set_visual_temperature_step(0.5f);
@@ -86,13 +84,21 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
     this->mode = *call.get_mode();
   if (call.get_target_temperature().has_value())
     this->target_temperature = *call.get_target_temperature();
-  if (call.get_fan_mode().has_value())
+  if (call.get_fan_mode().has_value()) {
     this->fan_mode = *call.get_fan_mode();
+    this->custom_fan_mode.reset();
+  }
+  if (call.get_custom_fan_mode().has_value()) {
+    this->custom_fan_mode = *call.get_custom_fan_mode();
+    this->fan_mode.reset();
+  }
 
   // Build combined setClimate packet (mirrors rc3.cpp setClimate).
   uint8_t power = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
   uint8_t mode  = climate_mode_to_wire(this->mode);
-  uint8_t fan   = fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
+  uint8_t fan   = this->custom_fan_mode.has_value()
+                    ? custom_fan_mode_to_wire(*this->custom_fan_mode)
+                    : fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
 
   // Temperature encoded as (°C * 2) → wire byte, matching original degrees/5
   // where degrees was passed in tenths: wire = (temp_tenths / 5) = (temp * 10 / 5) = temp * 2
@@ -200,13 +206,12 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
 
   bool is_on = (pwr_c == '1');
   climate::ClimateMode new_mode = is_on ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
-  climate::ClimateFanMode new_fan = wire_to_fan_mode(fan_c);
 
   ESP_LOGI(TAG, "rx ← power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
 
   this->mode             = new_mode;
-  this->fan_mode         = new_fan;
   this->target_temperature = temp_c;
+  apply_wire_fan_mode(fan_c);
   this->publish_state();
 
   if (op_data_interval_ms_ > 0) {
@@ -322,22 +327,25 @@ climate::ClimateMode RcEx3Climate::wire_to_climate_mode(uint8_t v) {
 }
 
 uint8_t RcEx3Climate::fan_mode_to_wire(climate::ClimateFanMode mode) {
-  switch (mode) {
-    case climate::CLIMATE_FAN_LOW:    return 0x00;
-    case climate::CLIMATE_FAN_MEDIUM: return 0x02;
-    case climate::CLIMATE_FAN_HIGH:   return 0x06;
-    case climate::CLIMATE_FAN_AUTO:
-    default:                          return 0x07;
-  }
+  // Only CLIMATE_FAN_AUTO is a built-in mode; custom modes "1"–"4" handled separately.
+  return 0x07;
 }
 
-climate::ClimateFanMode RcEx3Climate::wire_to_fan_mode(char c) {
+uint8_t RcEx3Climate::custom_fan_mode_to_wire(const std::string &mode) {
+  if (mode == "1") return 0x00;
+  if (mode == "2") return 0x01;
+  if (mode == "3") return 0x02;
+  if (mode == "4") return 0x06;
+  return 0x07;
+}
+
+void RcEx3Climate::apply_wire_fan_mode(char c) {
   switch (c) {
-    case '0': return climate::CLIMATE_FAN_LOW;
-    case '1': return climate::CLIMATE_FAN_LOW;     // speed 2 → LOW (closest)
-    case '2': return climate::CLIMATE_FAN_MEDIUM;
-    case '6': return climate::CLIMATE_FAN_HIGH;
-    default:  return climate::CLIMATE_FAN_AUTO;
+    case '0': this->fan_mode.reset(); this->custom_fan_mode = "1"; break;
+    case '1': this->fan_mode.reset(); this->custom_fan_mode = "2"; break;
+    case '2': this->fan_mode.reset(); this->custom_fan_mode = "3"; break;
+    case '6': this->fan_mode.reset(); this->custom_fan_mode = "4"; break;
+    default:  this->custom_fan_mode.reset(); this->fan_mode = climate::CLIMATE_FAN_AUTO; break;
   }
 }
 

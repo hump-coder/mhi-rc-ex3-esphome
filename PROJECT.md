@@ -130,16 +130,17 @@ When Home Assistant sends a control action, all four parameters (power, mode, fa
 
 ### Fan Speed Mapping
 
-The protocol has 4 discrete speeds (wire: 0x00/0x01/0x02/0x06) but ESPHome's `ClimateFanMode` only has Low/Medium/High/Auto. The mapping chosen:
+The protocol has 4 discrete speeds plus auto. ESPHome's built-in `ClimateFanMode` only covers Auto/Low/Medium/High, so speeds 1–4 are exposed as ESPHome *custom fan modes* (`"1"`–`"4"`). Auto remains a standard built-in mode.
 
-| HA fan mode | Wire value | Protocol speed |
-|-------------|-----------|----------------|
-| AUTO        | 0x07      | Auto           |
-| LOW         | 0x00      | Speed 1        |
-| MEDIUM      | 0x02      | Speed 3        |
-| HIGH        | 0x06      | Speed 4        |
+| HA fan mode       | Wire value | Protocol speed |
+|-------------------|-----------|----------------|
+| AUTO (built-in)   | 0x07      | Auto           |
+| "1" (custom)      | 0x00      | Speed 1        |
+| "2" (custom)      | 0x01      | Speed 2        |
+| "3" (custom)      | 0x02      | Speed 3        |
+| "4" (custom)      | 0x06      | Speed 4        |
 
-Speed 2 (0x01) is never sent from HA. On receive, wire values `'0'` and `'1'` both map to `CLIMATE_FAN_LOW`.
+On receive, `apply_wire_fan_mode()` maps wire chars `'0'`–`'2'`/`'6'` to custom modes and clears `fan_mode`, or sets `CLIMATE_FAN_AUTO` and clears `custom_fan_mode` for any other value.
 
 ### Diagnostic Sensors
 

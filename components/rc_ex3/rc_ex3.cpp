@@ -10,7 +10,6 @@ static const char *const TAG = "rc_ex3";
 
 climate::ClimateTraits RcEx3Climate::traits() {
   auto traits = climate::ClimateTraits();
-  traits.set_supports_current_temperature(true);
   traits.set_supported_modes({
     climate::CLIMATE_MODE_OFF,
     climate::CLIMATE_MODE_HEAT_COOL,

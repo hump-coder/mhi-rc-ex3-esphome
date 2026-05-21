@@ -18,7 +18,7 @@ The RC-EX3 panel is fitted to most MHI ducted and split-system indoor units, inc
 
 ## What you get in Home Assistant
 
-- Full **climate entity**: on/off, mode (Auto/Cool/Heat/Dry/Fan), fan speed (Auto/Low/Medium/High), target temperature (16–30 °C in 0.5 °C steps)
+- Full **climate entity**: on/off, mode (Auto/Cool/Heat/Dry/Fan), fan speed (Auto/1/2/3/4), target temperature (16–30 °C in 0.5 °C steps)
 - **Diagnostic sensors** (all optional): indoor temperature, outdoor temperature, return-air temperature, compressor frequency (Hz), compressor run-hours, indoor fan speed (raw), outdoor fan speed (raw)
 - OTA firmware updates via the ESPHome dashboard
 - Automatic reconnect / fallback AP if Wi-Fi drops
@@ -29,7 +29,7 @@ The RC-EX3 panel is fitted to most MHI ducted and split-system indoor units, inc
 
 ### What you need
 
-- ESP32 development board (e.g. ESP32-DevKitC, or the **D1 Mini ESP32** used in this build)
+- **LOLIN/Wemos S2 Mini** (ESP32-S2) — this is the board the YAML is pre-configured for (or any ESP32-S2 using the `esp32-s2-saola-1` platform definition)
 - Small **3.3 V buck converter** (a linear regulator draws too much quiescent current from the panel rail — use a switching converter)
 - **470 µF / 10 V capacitor** across the power rails (the ESP32 can pull transient current spikes that brown-out the panel)
 - 4 × jumper wires / bent header pins
@@ -107,7 +107,7 @@ uart:
 
 climate:
   - platform: rc_ex3
-    update_interval: 30s   # Status poll period; reduce to 10s if you need faster updates
+    update_interval: 5min  # Status poll period; reduce if you need faster updates
 ```
 
 If you're using a different ESP32 board and want to reassign pins, change `rx_pin` / `tx_pin` here. The baud rate and parity must stay at 38400 / EVEN — this is fixed by the RC-EX3 panel.

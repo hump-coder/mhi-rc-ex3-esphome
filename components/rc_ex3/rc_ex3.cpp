@@ -36,6 +36,7 @@ void RcEx3Climate::setup() {
   this->mode               = climate::CLIMATE_MODE_OFF;
   this->target_temperature = 22.0f;
   this->current_temperature = NAN;
+  send_status_request();
 }
 
 void RcEx3Climate::update() {

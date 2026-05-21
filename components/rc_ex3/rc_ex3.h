@@ -70,7 +70,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   size_t  hex_to_bytes(const char *hex, uint8_t *out, size_t max_out);
 
   static uint8_t fan_mode_to_wire(climate::ClimateFanMode mode);
-  static uint8_t custom_fan_mode_to_wire(const std::string &mode);
+  static uint8_t custom_fan_mode_to_wire(const char *mode);
   static uint8_t climate_mode_to_wire(climate::ClimateMode mode);
   static climate::ClimateMode wire_to_climate_mode(uint8_t wire_val);
   void apply_wire_fan_mode(char c);

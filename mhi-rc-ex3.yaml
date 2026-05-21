@@ -73,7 +73,8 @@ climate:
   - platform: rc_ex3
     name: "Living Room AC"
     uart_id: rc_ex3_uart
-    update_interval: 30s
+    update_interval: 5min   # status poll cadence
+    op_data_interval: 10    # operational data poll in minutes (0 = disabled)
 
     # ── Diagnostic sensors (all optional – remove any you don't need) ─────────
     indoor_temperature:

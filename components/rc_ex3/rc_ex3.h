@@ -48,6 +48,8 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
   float get_setup_priority() const override { return setup_priority::DATA; }
 
+  void set_op_data_interval(uint32_t minutes)              { op_data_interval_ms_ = minutes * 60000UL; }
+
   void set_indoor_temperature_sensor(sensor::Sensor *s)   { indoor_temperature_sensor_   = s; }
   void set_outdoor_temperature_sensor(sensor::Sensor *s)  { outdoor_temperature_sensor_  = s; }
   void set_return_air_temperature_sensor(sensor::Sensor *s){ return_air_temperature_sensor_ = s; }
@@ -77,8 +79,11 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   size_t   rx_len_{0};
   RxState  rx_state_{RxState::WAITING_FOR_SOF};
 
-  // Pending operational data request flag
-  bool op_data_pending_{false};
+  // Operational data polling
+  uint32_t op_data_interval_ms_{0};
+  uint32_t last_op_data_ms_{0};
+  bool     op_data_ever_requested_{false};
+  bool     op_data_pending_{false};
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

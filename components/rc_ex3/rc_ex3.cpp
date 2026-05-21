@@ -133,7 +133,6 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSSL1x → climate status response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L' && buf[4] == '1') {
     parse_status_response(buf, buflen);
-    op_data_pending_ = true;
     return;
   }
 
@@ -181,6 +180,15 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   this->fan_mode         = new_fan;
   this->target_temperature = temp_c;
   this->publish_state();
+
+  if (op_data_interval_ms_ > 0) {
+    uint32_t now = millis();
+    if (!op_data_ever_requested_ || (now - last_op_data_ms_) >= op_data_interval_ms_) {
+      op_data_pending_          = true;
+      op_data_ever_requested_   = true;
+      last_op_data_ms_          = now;
+    }
+  }
 }
 
 // ─── Operational data parser ──────────────────────────────────────────────────

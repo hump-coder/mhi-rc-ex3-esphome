@@ -109,6 +109,13 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   suppress_next_status_ = true;
   send_command(buf, len);
   this->publish_state();
+
+  if (post_command_delay_ms_ > 0) {
+    this->set_timeout("post_cmd_status", post_command_delay_ms_, [this]() {
+      ESP_LOGD(TAG, "post-command status request");
+      send_status_request();
+    });
+  }
 }
 
 // ─── Packet dispatch ─────────────────────────────────────────────────────────

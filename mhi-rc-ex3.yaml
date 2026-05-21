@@ -75,6 +75,7 @@ climate:
     uart_id: rc_ex3_uart
     update_interval: 5min   # status poll cadence
     # op_data_interval: 10  # optional: fetch sensor data every N minutes (default 0 = disabled)
+    # post_command_delay: 3 # optional: request a status update N seconds after each command (sanity check)
 
     # ── Diagnostic sensors (all optional – remove any you don't need) ─────────
     indoor_temperature:

@@ -49,6 +49,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_op_data_interval(uint32_t minutes)              { op_data_interval_ms_ = minutes * 60000UL; }
+  void set_post_command_delay(uint32_t seconds)            { post_command_delay_ms_ = seconds * 1000UL; }
 
   void set_indoor_temperature_sensor(sensor::Sensor *s)   { indoor_temperature_sensor_   = s; }
   void set_outdoor_temperature_sensor(sensor::Sensor *s)  { outdoor_temperature_sensor_  = s; }
@@ -84,6 +85,8 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t last_op_data_ms_{0};
   bool     op_data_ever_requested_{false};
   bool     op_data_pending_{false};
+
+  uint32_t post_command_delay_ms_{0};
 
   // Suppress the controller echo that arrives after a control() command.
   // The echo reflects the pre-command state, so we ignore it to avoid

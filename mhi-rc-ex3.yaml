@@ -55,7 +55,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/hump-coder/mhi-rc-ex3-esphome.git
-      ref: b026a59c20ba843ce5a0cd1c329400f8c436181a
+      ref: 5c58f1490435abca6a5e6fe2317ec04a90965e6b
     components: [rc_ex3]
 
 # ── UART to RC-EX3 panel ─────────────────────────────────────────────────────

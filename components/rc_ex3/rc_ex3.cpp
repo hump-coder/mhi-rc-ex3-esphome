@@ -110,6 +110,13 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
 // ─── Packet dispatch ─────────────────────────────────────────────────────────
 
 void RcEx3Climate::parse_packet(const char *raw, size_t len) {
+  // Log raw bytes as hex so unsolicited controller packets are visible
+  char hex_dump[512];
+  size_t hpos = 0;
+  for (size_t i = 0; i < len && hpos < sizeof(hex_dump) - 3; i++)
+    hpos += snprintf(hex_dump + hpos, sizeof(hex_dump) - hpos, "%02X ", (uint8_t)raw[i]);
+  ESP_LOGD(TAG, "rx raw (%d bytes): %s", (int)len, hex_dump);
+
   // Filter raw bytes: skip until first 'R', keep printable ASCII only.
   char buf[256];
   size_t buflen = 0;
@@ -125,10 +132,12 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   }
   buf[buflen] = '\0';
 
-  if (buflen < 5)
+  if (buflen < 5) {
+    ESP_LOGD(TAG, "rx filtered too short (%d chars), discarding", (int)buflen);
     return;
+  }
 
-  ESP_LOGV(TAG, "rx: %s", buf);
+  ESP_LOGD(TAG, "rx filtered: %s", buf);
 
   // RSSL1x → climate status response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L' && buf[4] == '1') {
@@ -136,7 +145,7 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
     return;
   }
 
-  // RSR1x → operational data page 1 response
+  // RSR1x → operational data response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
       // Unit signals page 2 required; re-request with RSR20000E9
@@ -146,6 +155,8 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
     }
     return;
   }
+
+  ESP_LOGD(TAG, "rx unhandled packet: %s", buf);
 }
 
 // ─── Status response parser ───────────────────────────────────────────────────

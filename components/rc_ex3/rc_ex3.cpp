@@ -73,6 +73,7 @@ void RcEx3Climate::loop() {
 
   // Fire op_data once 10 s after startup regardless of yaml op_data_interval setting.
   if (!op_data_ever_requested_ && millis() >= 10000) {
+    ESP_LOGI(TAG, "startup op-data request (%.1f s after boot)", millis() / 1000.0f);
     op_data_pending_        = true;
     op_data_ever_requested_ = true;
     last_op_data_ms_        = millis();
@@ -82,6 +83,7 @@ void RcEx3Climate::loop() {
   // keeping the two transactions separated by one loop tick.
   if (op_data_pending_) {
     op_data_pending_ = false;
+    ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
   }
 }
@@ -175,6 +177,7 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
         ESP_LOGD(TAG, "rx ← suppressed RSR2 echo");
       } else {
         // Controller signals page 2 required; send RSR2 and suppress its echo.
+        ESP_LOGD(TAG, "rx ← RSR2 (page 2 required), sending RSR2 request");
         suppress_next_rsr2_echo_ = true;
         send_operational_data_request(true);
       }
@@ -256,10 +259,13 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   float outdoor_air  = static_cast<float>(static_cast<uint8_t>(data[idx(POS_OUTDOOR_AIR_TEMP)]) / 4 - 22);
   float return_air   = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 10.0f;
 
-  ESP_LOGD(TAG, "op-data raw: indoor=%d outdoor=%d return=%d",
-           data[idx(POS_INDOOR_AIR_TEMP)], data[idx(POS_OUTDOOR_AIR_TEMP)], data[idx(POS_RETURN_AIR_TEMP)]);
   uint8_t comp_hz    = data[idx(POS_COMPRESSOR_HZ)];
   uint8_t in_fan     = data[idx(POS_INDOOR_FAN_SPEED)];
+
+  ESP_LOGI(TAG, "op-data → indoor=%.1f°C outdoor=%.1f°C return=%.1f°C comp=%dHz fan=%d",
+           indoor_air, outdoor_air, return_air, comp_hz, in_fan);
+  ESP_LOGD(TAG, "op-data raw: indoor=%d outdoor=%d return=%d",
+           data[idx(POS_INDOOR_AIR_TEMP)], data[idx(POS_OUTDOOR_AIR_TEMP)], data[idx(POS_RETURN_AIR_TEMP)]);
 
   // Update current_temperature from indoor sensor and republish climate state
   this->current_temperature = indoor_air;

@@ -85,6 +85,11 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool     op_data_ever_requested_{false};
   bool     op_data_pending_{false};
 
+  // Suppress the controller echo that arrives after a control() command.
+  // The echo reflects the pre-command state, so we ignore it to avoid
+  // stomping on our own optimistic publish.
+  bool     suppress_next_status_{false};
+
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};
   sensor::Sensor *return_air_temperature_sensor_{nullptr};

@@ -106,6 +106,7 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C) payload=%s",
            power, mode, fan, temp_wire, this->target_temperature, buf);
 
+  suppress_next_status_ = true;
   send_command(buf, len);
   this->publish_state();
 }
@@ -175,6 +176,12 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
 void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   if (len < 32)
     return;
+
+  if (suppress_next_status_) {
+    suppress_next_status_ = false;
+    ESP_LOGI(TAG, "rx ← suppressed echo (post-command), ignoring");
+    return;
+  }
 
   char pwr_c  = buf[13];
   char mode_c = buf[17];

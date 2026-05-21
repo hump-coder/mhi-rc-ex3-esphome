@@ -30,6 +30,8 @@ climate::ClimateTraits RcEx3Climate::traits() {
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 void RcEx3Climate::setup() {
+  // Discard any stale bytes left in the RX buffer from a previous session.
+  while (this->available()) { uint8_t b; this->read_byte(&b); }
   this->set_supported_custom_fan_modes({"1", "2", "3", "4"});
   this->mode               = climate::CLIMATE_MODE_OFF;
   this->target_temperature = 22.0f;
@@ -168,8 +170,14 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR1x → operational data response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit signals page 2 required; re-request with RSR20000E9
-      send_operational_data_request(true);
+      if (suppress_next_rsr2_echo_) {
+        suppress_next_rsr2_echo_ = false;
+        ESP_LOGD(TAG, "rx ← suppressed RSR2 echo");
+      } else {
+        // Controller signals page 2 required; send RSR2 and suppress its echo.
+        suppress_next_rsr2_echo_ = true;
+        send_operational_data_request(true);
+      }
     } else if (buf[3] == '1') {
       parse_operational_data(buf, buflen);
     }

@@ -93,6 +93,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   // The echo reflects the pre-command state, so we ignore it to avoid
   // stomping on our own optimistic publish.
   bool     suppress_next_status_{false};
+  bool     suppress_next_rsr2_echo_{false};
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

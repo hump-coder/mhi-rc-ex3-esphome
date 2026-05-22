@@ -5,6 +5,8 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/uart/uart.h"
 
+#include <string>
+
 namespace esphome {
 namespace rc_ex3 {
 
@@ -68,6 +70,8 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool op_data_pending_{false};
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
   bool rx_overflowed_{false};
+
+  std::string requested_custom_fan_mode_{};
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

@@ -96,25 +96,26 @@ void RcEx3Climate::loop() {
 
   // Send a fresh RSR1 op-data request (first send or interval-triggered).
   if (op_data_pending_) {
-    op_data_pending_       = false;
-    rsr2_chain_active_     = false;
-    rsr2_chain_start_ms_   = 0;
-    rsr2_echo_ms_          = millis();
+    op_data_pending_        = false;
+    rsr2_chain_active_      = false;
+    rsr2_chain_start_ms_    = 0;
+    rsr2_last_received_ms_  = 0;
+    rsr2_echo_ms_           = millis();
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
   }
 
-  // RSR2 echo loop: protocol requires echoing RSR20000E9 back to the unit
-  // after each RSR2 it sends; rate-limited to RSR2_ECHO_INTERVAL_MS to
-  // prevent a mirror-loop runaway.  Unit eventually responds with RSR1 data.
+  // RSR2 echo: mirror original rc3.cpp behaviour — echo RSR2 exactly
+  // RSR2_ECHO_DELAY_MS after receiving it (unit eventually replies with RSR1).
   if (rsr2_chain_active_) {
     uint32_t now = millis();
     if (now - rsr2_chain_start_ms_ >= RSR2_CHAIN_TIMEOUT_MS) {
       ESP_LOGW(TAG, "RSR2 handshake timed out after %.1fs, giving up",
                (now - rsr2_chain_start_ms_) / 1000.0f);
       rsr2_chain_active_ = false;
-      last_op_data_ms_   = millis();  // reset so interval doesn't re-fire immediately
-    } else if ((now - rsr2_echo_ms_) >= RSR2_ECHO_INTERVAL_MS) {
+      last_op_data_ms_   = millis();
+    } else if (rsr2_last_received_ms_ > rsr2_echo_ms_ &&
+               (now - rsr2_last_received_ms_) >= RSR2_ECHO_DELAY_MS) {
       rsr2_echo_ms_ = now;
       ESP_LOGD(TAG, "tx → RSR2 echo (%.1fs elapsed)",
                (now - rsr2_chain_start_ms_) / 1000.0f);
@@ -218,17 +219,17 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
       // Unit is not yet ready to deliver RSR1 data.  Protocol requires echoing
-      // RSR2 back; loop() sends rate-limited echoes every RSR2_ECHO_INTERVAL_MS.
+      // RSR2 back 500 ms after receipt (matching original rc3.cpp delay(500)).
       uint32_t now = millis();
       if (!rsr2_chain_active_) {
         rsr2_chain_active_   = true;
         rsr2_chain_start_ms_ = now;
-        rsr2_echo_ms_        = now - RSR2_ECHO_INTERVAL_MS;  // trigger first echo immediately
         ESP_LOGD(TAG, "rx ← RSR2 (unit not ready), starting echo handshake");
       } else {
         ESP_LOGD(TAG, "rx ← RSR2 (%.1fs elapsed)",
                  (now - rsr2_chain_start_ms_) / 1000.0f);
       }
+      rsr2_last_received_ms_ = now;  // loop() will echo 500 ms from now
     } else if (buf[3] == '1') {
       rsr2_chain_active_ = false;
       parse_operational_data(buf, buflen);

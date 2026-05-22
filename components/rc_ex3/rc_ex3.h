@@ -91,11 +91,12 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   // The unit responds RSR2 when it is not yet ready to deliver RSR1 data.
   // Protocol requires echoing RSR2 (RSR20000E9) back; the unit keeps sending
   // RSR2 until it is ready, then switches to RSR1 data.
-  // Rate-limit echoes to RSR2_ECHO_INTERVAL_MS to prevent a mirror-loop runaway.
+  // Match the original rc3.cpp behaviour: echo 500 ms after receiving RSR2.
   static const uint32_t RSR2_CHAIN_TIMEOUT_MS  = 120000;  // 2 min overall limit
-  static const uint32_t RSR2_ECHO_INTERVAL_MS  =   1000;  //  1 s between echoes
+  static const uint32_t RSR2_ECHO_DELAY_MS     =     500;  // delay after receipt before echoing
   uint32_t rsr2_chain_start_ms_{0};
-  uint32_t rsr2_echo_ms_{0};
+  uint32_t rsr2_last_received_ms_{0};  // millis() of most-recent RSR2 receipt
+  uint32_t rsr2_echo_ms_{0};           // millis() of most-recent RSR2 echo sent
   bool     rsr2_chain_active_{false};
 
   uint32_t post_command_delay_ms_{0};

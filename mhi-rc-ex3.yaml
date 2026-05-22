@@ -55,7 +55,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/hump-coder/mhi-rc-ex3-esphome.git
-      ref: 29e9997a18252833f323ea7a4ddae12666373bc3
+      ref: c7df78128f525b2ecc0279ba72004a19f9eafd25
     refresh: 0s
     components: [rc_ex3]
 

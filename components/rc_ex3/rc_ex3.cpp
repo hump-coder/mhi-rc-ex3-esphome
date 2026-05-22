@@ -31,6 +31,9 @@ climate::ClimateTraits RcEx3Climate::traits() {
   });
   traits.set_supported_fan_modes({
     climate::CLIMATE_FAN_AUTO,
+    climate::CLIMATE_FAN_LOW,
+    climate::CLIMATE_FAN_MEDIUM,
+    climate::CLIMATE_FAN_HIGH,
   });
   set_current_temp_support(traits, true);
   traits.set_visual_min_temperature(16.0f);
@@ -44,7 +47,6 @@ climate::ClimateTraits RcEx3Climate::traits() {
 void RcEx3Climate::setup() {
   // Discard any stale bytes left in the RX buffer from a previous session.
   while (this->available()) { uint8_t b; this->read_byte(&b); }
-  this->set_supported_custom_fan_modes({"1", "2", "3", "4"});
   this->mode               = climate::CLIMATE_MODE_OFF;
   this->target_temperature = 22.0f;
   this->current_temperature = NAN;
@@ -129,16 +131,12 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   if (call.get_target_temperature().has_value())
     this->target_temperature = *call.get_target_temperature();
   if (call.get_fan_mode().has_value())
-    this->set_fan_mode_(*call.get_fan_mode());
-  if (call.has_custom_fan_mode())
-    this->set_custom_fan_mode_(call.get_custom_fan_mode());
+    this->fan_mode = *call.get_fan_mode();
 
   // Build combined setClimate packet (mirrors rc3.cpp setClimate).
   uint8_t power = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
   uint8_t mode  = climate_mode_to_wire(this->mode);
-  uint8_t fan   = this->has_custom_fan_mode()
-                    ? custom_fan_mode_to_wire(this->get_custom_fan_mode().c_str())
-                    : fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
+  uint8_t fan   = fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
 
   // Temperature encoded as (°C * 2) → wire byte, matching original degrees/5
   // where degrees was passed in tenths: wire = (temp_tenths / 5) = (temp * 10 / 5) = temp * 2
@@ -300,7 +298,9 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
 
   // Update current_temperature from indoor sensor and republish climate state
   this->current_temperature = indoor_air;
+  ESP_LOGI(TAG, "current_temperature pre-publish: %.1f°C", this->current_temperature);
   this->publish_state();
+  ESP_LOGI(TAG, "current_temperature post-publish: %.1f°C", this->current_temperature);
 
   if (indoor_temperature_sensor_)    indoor_temperature_sensor_->publish_state(indoor_air);
   if (outdoor_temperature_sensor_)   outdoor_temperature_sensor_->publish_state(outdoor_air);
@@ -389,11 +389,11 @@ uint8_t RcEx3Climate::custom_fan_mode_to_wire(const char *mode) {
 
 void RcEx3Climate::apply_wire_fan_mode(char c) {
   switch (c) {
-    case '0': this->set_custom_fan_mode_("1"); break;
-    case '1': this->set_custom_fan_mode_("2"); break;
-    case '2': this->set_custom_fan_mode_("3"); break;
-    case '6': this->set_custom_fan_mode_("4"); break;
-    default:  this->set_fan_mode_(climate::CLIMATE_FAN_AUTO); break;
+    case '0': this->fan_mode = climate::CLIMATE_FAN_LOW;    break;
+    case '1': this->fan_mode = climate::CLIMATE_FAN_LOW;    break;
+    case '2': this->fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
+    case '6': this->fan_mode = climate::CLIMATE_FAN_HIGH;   break;
+    default:  this->fan_mode = climate::CLIMATE_FAN_AUTO;   break;
   }
 }
 

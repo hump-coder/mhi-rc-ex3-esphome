@@ -97,39 +97,18 @@ void RcEx3Climate::loop() {
     last_op_data_ms_        = millis();
   }
 
-  // Interval-based op_data requests — only when no chain is active.
+  // Interval-based op_data requests.
   if (op_data_interval_ms_ > 0 && op_data_ever_requested_ && !op_data_pending_ &&
-      !rsr2_chain_active_ &&
       (millis() - last_op_data_ms_) >= op_data_interval_ms_) {
-    op_data_pending_  = true;
-    last_op_data_ms_  = millis();
+    op_data_pending_ = true;
+    last_op_data_ms_ = millis();
   }
 
-  // Send a fresh RSR1 op-data request (first send or interval-triggered).
+  // Send a fresh RSR1 op-data request (startup or interval-triggered).
   if (op_data_pending_) {
-    op_data_pending_        = false;
-    rsr2_chain_active_      = false;
-    rsr2_chain_start_ms_    = 0;
-    rsr2_last_received_ms_  = 0;
-    rsr2_echo_ms_           = millis();
+    op_data_pending_ = false;
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
-  }
-
-  // Wait passively for RSR1 after the initial request — no RSR2 echoes.
-  // Testing whether the unit delivers RSR1 on its own without echoing.
-  if (rsr2_chain_active_) {
-    uint32_t now = millis();
-    if (now - rsr2_chain_start_ms_ >= RSR2_CHAIN_TIMEOUT_MS) {
-      ESP_LOGW(TAG, "RSR1 wait timed out after %.1fs, retrying",
-               (now - rsr2_chain_start_ms_) / 1000.0f);
-      rsr2_chain_active_   = false;
-      rsr2_chain_start_ms_ = now;
-      ESP_LOGD(TAG, "tx → RSR1 op-data request (retry)");
-      send_operational_data_request(false);
-      rsr2_chain_active_   = true;
-      rsr2_chain_start_ms_ = millis();
-    }
   }
 }
 
@@ -227,20 +206,10 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit is not yet ready to deliver RSR1 data.  Protocol requires echoing
-      // RSR2 back 500 ms after receipt (matching original rc3.cpp delay(500)).
-      uint32_t now = millis();
-      if (!rsr2_chain_active_) {
-        rsr2_chain_active_   = true;
-        rsr2_chain_start_ms_ = now;
-        ESP_LOGD(TAG, "rx ← RSR2 (unit not ready), starting echo handshake");
-      } else {
-        ESP_LOGD(TAG, "rx ← RSR2 (%.1fs elapsed)",
-                 (now - rsr2_chain_start_ms_) / 1000.0f);
-      }
-      rsr2_last_received_ms_ = now;  // loop() will echo 500 ms from now
+      // Unit signals it needs the page-2 request before it will send data.
+      ESP_LOGD(TAG, "rx ← RSR2, sending page-2 request");
+      send_operational_data_request(true);
     } else if (buf[3] == '1') {
-      rsr2_chain_active_ = false;
       parse_operational_data(buf, buflen);
     }
     return;

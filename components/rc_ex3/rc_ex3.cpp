@@ -40,10 +40,15 @@ void RcEx3Climate::setup() {
 }
 
 void RcEx3Climate::update() {
-  // Called on the polling interval (default 30 s).
-  // Send status request first; operational data request follows after we get
-  // the status response (op_data_pending_ flag), so we avoid overlapping Tx.
   send_status_request();
+  // When op_data_interval is disabled (0), piggyback an op_data request on
+  // every status poll so current_temperature updates even after a startup
+  // failure (e.g. unit was off at boot).
+  if (op_data_interval_ms_ == 0 && !op_data_pending_ && !rsr2_chain_active_) {
+    op_data_pending_        = true;
+    op_data_ever_requested_ = true;
+    last_op_data_ms_        = millis();
+  }
 }
 
 // ─── Serial RX loop ──────────────────────────────────────────────────────────
@@ -72,6 +77,7 @@ void RcEx3Climate::loop() {
   }
 
   // Fire op_data once 10 s after startup regardless of yaml op_data_interval setting.
+  // Suppress if a chain is already active (chain will retry on its own).
   if (!op_data_ever_requested_ && millis() >= 10000) {
     ESP_LOGI(TAG, "startup op-data request (%.1f s after boot)", millis() / 1000.0f);
     op_data_pending_        = true;
@@ -79,22 +85,39 @@ void RcEx3Climate::loop() {
     last_op_data_ms_        = millis();
   }
 
-  // Interval-based op_data requests fired on their own schedule, not tied to
-  // the status poll cadence (avoids quantization when both intervals are equal).
+  // Interval-based op_data requests — only when no chain is active.
   if (op_data_interval_ms_ > 0 && op_data_ever_requested_ && !op_data_pending_ &&
+      !rsr2_chain_active_ &&
       (millis() - last_op_data_ms_) >= op_data_interval_ms_) {
     op_data_pending_  = true;
     last_op_data_ms_  = millis();
   }
 
-  // Send the operational data request, keeping it separated from any
-  // concurrent UART activity by one loop tick.
+  // Send a fresh RSR1 op-data request (first send or interval-triggered).
   if (op_data_pending_) {
     op_data_pending_       = false;
     rsr2_chain_active_     = false;
     rsr2_chain_start_ms_   = 0;
+    rsr1_retry_ms_         = millis();
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
+  }
+
+  // RSR1 retry loop: if we got RSR2 (unit not ready), keep resending RSR1
+  // every RSR1_RETRY_INTERVAL_MS until we receive RSR1 data or time out.
+  if (rsr2_chain_active_) {
+    uint32_t now = millis();
+    if (now - rsr2_chain_start_ms_ >= RSR2_CHAIN_TIMEOUT_MS) {
+      ESP_LOGW(TAG, "RSR1 retry timed out after %.1fs, giving up",
+               (now - rsr2_chain_start_ms_) / 1000.0f);
+      rsr2_chain_active_ = false;
+      last_op_data_ms_   = millis();  // reset so interval doesn't re-fire immediately
+    } else if ((now - rsr1_retry_ms_) >= RSR1_RETRY_INTERVAL_MS) {
+      rsr1_retry_ms_ = now;
+      ESP_LOGD(TAG, "tx → RSR1 retry (%.1fs since first RSR2)",
+               (now - rsr2_chain_start_ms_) / 1000.0f);
+      send_operational_data_request(false);
+    }
   }
 }
 
@@ -192,23 +215,19 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit responds RSR2 to our RSR1, and continues for each RSR2 we send,
-      // until it is ready to deliver RSR1 data.  Original code had no limit
-      // and op_data worked; use a time-based cutoff so the chain runs as long
-      // as the unit needs without a true runaway.
+      // Unit is not yet ready to deliver RSR1 data.  Do NOT echo RSR2 — echoing
+      // keeps the unit stuck in a mirror loop.  The loop() retry timer will
+      // resend RSR1 every RSR1_RETRY_INTERVAL_MS until data arrives.
       uint32_t now = millis();
       if (!rsr2_chain_active_) {
         rsr2_chain_active_   = true;
         rsr2_chain_start_ms_ = now;
-      }
-      if (now - rsr2_chain_start_ms_ < RSR2_CHAIN_TIMEOUT_MS) {
-        ESP_LOGD(TAG, "rx ← RSR2 handshake (%.1fs), sending RSR2",
-                 (now - rsr2_chain_start_ms_) / 1000.0f);
-        send_operational_data_request(true);
+        rsr1_retry_ms_       = now;
+        ESP_LOGD(TAG, "rx ← RSR2 (unit not ready), will retry RSR1 every %.1fs",
+                 RSR1_RETRY_INTERVAL_MS / 1000.0f);
       } else {
-        ESP_LOGW(TAG, "rx ← RSR2 chain timed out after %.1fs, giving up",
+        ESP_LOGD(TAG, "rx ← RSR2 (%.1fs elapsed), waiting for retry",
                  (now - rsr2_chain_start_ms_) / 1000.0f);
-        rsr2_chain_active_ = false;
       }
     } else if (buf[3] == '1') {
       rsr2_chain_active_ = false;

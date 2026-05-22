@@ -32,10 +32,9 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
   float get_setup_priority() const override { return setup_priority::DATA; }
 
-  void set_enable_op_data(bool enable)  { op_data_enabled_ = enable; }
+  void set_op_data_interval(uint32_t minutes) { op_data_enabled_ = (minutes > 0); }
 
-  // No-ops kept for YAML/climate.py compatibility
-  void set_op_data_interval(uint32_t) {}
+  // No-op kept for YAML/climate.py compatibility
   void set_post_command_delay(uint32_t) {}
 
   void set_indoor_temperature_sensor(sensor::Sensor *s)    { indoor_temperature_sensor_    = s; }

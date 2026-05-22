@@ -97,8 +97,9 @@ void RcEx3Climate::loop() {
     last_op_data_ms_        = millis();
   }
 
-  // Interval-based op_data requests.
+  // Interval-based op_data requests — only when no RSR2 echo is pending.
   if (op_data_interval_ms_ > 0 && op_data_ever_requested_ && !op_data_pending_ &&
+      rsr2_last_received_ms_ == 0 &&
       (millis() - last_op_data_ms_) >= op_data_interval_ms_) {
     op_data_pending_ = true;
     last_op_data_ms_ = millis();
@@ -106,9 +107,17 @@ void RcEx3Climate::loop() {
 
   // Send a fresh RSR1 op-data request (startup or interval-triggered).
   if (op_data_pending_) {
-    op_data_pending_ = false;
+    op_data_pending_       = false;
+    rsr2_last_received_ms_ = 0;  // cancel any leftover echo from a previous exchange
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
+  }
+
+  // Echo RSR20000E9 exactly 500ms after receiving RSR2 (matches original delay(500)).
+  if (rsr2_last_received_ms_ > 0 && (millis() - rsr2_last_received_ms_) >= 500) {
+    rsr2_last_received_ms_ = 0;
+    ESP_LOGD(TAG, "tx → RSR2 echo");
+    send_operational_data_request(true);
   }
 }
 
@@ -206,10 +215,11 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit signals it needs the page-2 request before it will send data.
-      ESP_LOGD(TAG, "rx ← RSR2, sending page-2 request");
-      send_operational_data_request(true);
+      // Schedule echo of RSR20000E9 after 500ms (matching original delay(500)).
+      rsr2_last_received_ms_ = millis();
+      ESP_LOGD(TAG, "rx ← RSR2, echo scheduled in 500ms");
     } else if (buf[3] == '1') {
+      rsr2_last_received_ms_ = 0;  // cancel any pending echo
       parse_operational_data(buf, buflen);
     }
     return;

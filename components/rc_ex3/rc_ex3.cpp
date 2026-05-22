@@ -90,7 +90,8 @@ void RcEx3Climate::loop() {
   // Send the operational data request, keeping it separated from any
   // concurrent UART activity by one loop tick.
   if (op_data_pending_) {
-    op_data_pending_ = false;
+    op_data_pending_   = false;
+    rsr2_chain_count_  = 0;
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
   }
@@ -187,19 +188,24 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
     return;
   }
 
-  // RSR1x → operational data response
+  // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      if (suppress_next_rsr2_echo_) {
-        suppress_next_rsr2_echo_ = false;
-        ESP_LOGD(TAG, "rx ← suppressed RSR2 echo");
-      } else {
-        // Controller signals page 2 required; send RSR2 and suppress its echo.
-        ESP_LOGD(TAG, "rx ← RSR2 (page 2 required), sending RSR2 request");
-        suppress_next_rsr2_echo_ = true;
+      // Unit responds RSR2 to our RSR1, and again to each RSR2 we send, until
+      // it is ready to deliver RSR1 data.  The second RSR2 that appears in the
+      // log is the unit continuing the handshake (it arrives before our own
+      // RSR2 transmission completes, so it cannot be a UART loopback echo).
+      // Keep the chain going up to RSR2_CHAIN_MAX to avoid a true runaway.
+      if (rsr2_chain_count_ < RSR2_CHAIN_MAX) {
+        rsr2_chain_count_++;
+        ESP_LOGD(TAG, "rx ← RSR2 handshake (%d/%d), sending RSR2", rsr2_chain_count_, RSR2_CHAIN_MAX);
         send_operational_data_request(true);
+      } else {
+        ESP_LOGW(TAG, "rx ← RSR2 chain limit reached, giving up on op-data");
+        rsr2_chain_count_ = 0;
       }
     } else if (buf[3] == '1') {
+      rsr2_chain_count_ = 0;
       parse_operational_data(buf, buflen);
     }
     return;

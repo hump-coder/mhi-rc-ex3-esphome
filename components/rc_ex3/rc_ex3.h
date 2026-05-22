@@ -87,13 +87,19 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool     op_data_ever_requested_{false};
   bool     op_data_pending_{false};
 
+  // RSR2 handshake chain counter.  The unit sends RSR2 in response to RSR1,
+  // and continues doing so in response to each RSR2 we send; the chain
+  // terminates when the unit sends RSR1 data.  Cap the chain to avoid
+  // running forever if the unit never delivers data.
+  static const uint8_t RSR2_CHAIN_MAX = 10;
+  uint8_t  rsr2_chain_count_{0};
+
   uint32_t post_command_delay_ms_{0};
 
   // Suppress the controller echo that arrives after a control() command.
   // The echo reflects the pre-command state, so we ignore it to avoid
   // stomping on our own optimistic publish.
   bool     suppress_next_status_{false};
-  bool     suppress_next_rsr2_echo_{false};
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

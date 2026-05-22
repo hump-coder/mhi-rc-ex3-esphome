@@ -223,16 +223,17 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   ESP_LOGI(TAG, "op-data → indoor=%.1f°C outdoor=%.1f°C return=%.1f°C comp=%dHz fan=%d",
            indoor_air, outdoor_air, return_air, comp_hz, in_fan);
 
-  this->current_temperature = indoor_air;
-  ESP_LOGD(TAG, "before publish: current_temperature=%.2f", this->current_temperature);
-  this->publish_state();
-  ESP_LOGD(TAG, "after publish: current_temperature=%.2f", this->current_temperature);
-
   if (indoor_temperature_sensor_)     indoor_temperature_sensor_->publish_state(indoor_air);
   if (outdoor_temperature_sensor_)    outdoor_temperature_sensor_->publish_state(outdoor_air);
   if (return_air_temperature_sensor_) return_air_temperature_sensor_->publish_state(return_air);
   if (compressor_frequency_sensor_)   compressor_frequency_sensor_->publish_state(comp_hz);
   if (indoor_fan_speed_sensor_)       indoor_fan_speed_sensor_->publish_state(in_fan);
+
+  ESP_LOGD(TAG, "after sensors: current_temperature=%.2f", this->current_temperature);
+  this->current_temperature = indoor_air;
+  ESP_LOGD(TAG, "before publish: current_temperature=%.2f", this->current_temperature);
+  this->publish_state();
+  ESP_LOGD(TAG, "after publish: current_temperature=%.2f", this->current_temperature);
 }
 
 // ─── Packet send helpers ─────────────────────────────────────────────────────

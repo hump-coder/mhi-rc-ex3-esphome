@@ -19,12 +19,8 @@ climate::ClimateTraits RcEx3Climate::traits() {
     climate::CLIMATE_MODE_DRY,
     climate::CLIMATE_MODE_FAN_ONLY,
   });
-  traits.set_supported_fan_modes({
-    climate::CLIMATE_FAN_AUTO,
-    climate::CLIMATE_FAN_LOW,
-    climate::CLIMATE_FAN_MEDIUM,
-    climate::CLIMATE_FAN_HIGH,
-  });
+  traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO});
+  traits.set_supported_custom_fan_modes({"1", "2", "3", "4"});
   traits.set_visual_min_temperature(16.0f);
   traits.set_visual_max_temperature(30.0f);
   traits.set_visual_temperature_step(0.5f);
@@ -41,7 +37,14 @@ void RcEx3Climate::setup() {
 
 void RcEx3Climate::update() {
   send_status_request();
-  if (op_data_enabled_)
+
+  op_data_requested_ = false;
+  if (op_data_interval_minutes_ == 0)
+    return;
+
+  const uint32_t now = millis();
+  const uint32_t interval_ms = op_data_interval_minutes_ * 60000UL;
+  if (last_op_data_ms_ == 0 || (now - last_op_data_ms_) >= interval_ms)
     op_data_requested_ = true;
 }
 
@@ -55,17 +58,24 @@ void RcEx3Climate::loop() {
 
     if (rx_state_ == RxState::WAITING_FOR_SOF) {
       if (c == 0x02) {
-        rx_len_   = 0;
+        rx_len_ = 0;
+        rx_overflowed_ = false;
         rx_state_ = RxState::READING_PAYLOAD;
       }
     } else {
       if (c == 0x03) {
-        rx_buf_[rx_len_] = '\0';
-        parse_packet(rx_buf_, rx_len_);
+        if (rx_overflowed_) {
+          ESP_LOGW(TAG, "rx frame dropped after overflow");
+        } else {
+          rx_buf_[rx_len_] = '\0';
+          parse_packet(rx_buf_, rx_len_);
+        }
         rx_state_ = RxState::WAITING_FOR_SOF;
         rx_len_   = 0;
       } else if (rx_len_ < RX_BUF_SIZE - 1) {
         rx_buf_[rx_len_++] = static_cast<char>(c);
+      } else {
+        rx_overflowed_ = true;
       }
     }
   }
@@ -90,7 +100,18 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
 
   uint8_t power    = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
   uint8_t mode     = climate_mode_to_wire(this->mode);
-  uint8_t fan      = fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
+  uint8_t fan = 0x07;
+  if (call.get_custom_fan_mode().has_value())
+    this->custom_fan_mode = *call.get_custom_fan_mode();
+  if (this->custom_fan_mode.has_value()) {
+    if (*this->custom_fan_mode == "1") fan = 0x00;
+    else if (*this->custom_fan_mode == "2") fan = 0x01;
+    else if (*this->custom_fan_mode == "3") fan = 0x02;
+    else if (*this->custom_fan_mode == "4") fan = 0x06;
+    this->fan_mode = climate::CLIMATE_FAN_ON;
+  } else {
+    this->fan_mode = climate::CLIMATE_FAN_AUTO;
+  }
   uint8_t temp_wire = static_cast<uint8_t>(this->target_temperature * 2.0f);
 
   char buf[64];
@@ -108,16 +129,24 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
 // ─── Packet dispatch ─────────────────────────────────────────────────────────
 
 void RcEx3Climate::parse_packet(const char *raw, size_t len) {
+  char payload[256];
+  size_t payload_len = 0;
+  if (!validate_checksum_and_extract_payload_(raw, len, payload, sizeof(payload), payload_len))
+    return;
+
   char buf[256];
   size_t buflen = 0;
   bool started = false;
 
-  for (size_t i = 0; i < len && buflen < sizeof(buf) - 1; i++) {
-    uint8_t c = static_cast<uint8_t>(raw[i]);
+  for (size_t i = 0; i < payload_len && buflen < sizeof(buf) - 1; i++) {
+    uint8_t c = static_cast<uint8_t>(payload[i]);
     if (!started) {
-      if (raw[i] == 'R') { buf[buflen++] = raw[i]; started = true; }
-    } else {
-      if (c > 32 && c < 127) buf[buflen++] = raw[i];
+      if (payload[i] == 'R') {
+        buf[buflen++] = payload[i];
+        started = true;
+      }
+    } else if (c >= 32 && c < 127) {
+      buf[buflen++] = payload[i];
     }
   }
   buf[buflen] = '\0';
@@ -151,6 +180,37 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   ESP_LOGD(TAG, "rx unhandled: %s", buf);
 }
 
+
+bool RcEx3Climate::validate_checksum_and_extract_payload_(const char *raw, size_t len, char *payload,
+                                                          size_t payload_size, size_t &payload_len) {
+  payload_len = 0;
+  if (len < 3) {
+    ESP_LOGW(TAG, "rx frame too short for checksum");
+    return false;
+  }
+
+  const size_t body_len = len - 2;
+  const char rx_hi = raw[body_len];
+  const char rx_lo = raw[body_len + 1];
+  if (!isxdigit(static_cast<uint8_t>(rx_hi)) || !isxdigit(static_cast<uint8_t>(rx_lo))) {
+    ESP_LOGW(TAG, "rx frame missing checksum hex");
+    return false;
+  }
+
+  char rx_sum_hex[3] = {rx_hi, rx_lo, '\0'};
+  uint8_t rx_sum = static_cast<uint8_t>(strtol(rx_sum_hex, nullptr, 16));
+  uint8_t calc_sum = calc_checksum(raw, body_len);
+  if (rx_sum != calc_sum) {
+    ESP_LOGW(TAG, "rx checksum mismatch: got=%02X expected=%02X", rx_sum, calc_sum);
+    return false;
+  }
+
+  payload_len = (body_len < (payload_size - 1)) ? body_len : (payload_size - 1);
+  memcpy(payload, raw, payload_len);
+  payload[payload_len] = '\0';
+  return true;
+}
+
 // ─── Status response parser ───────────────────────────────────────────────────
 //
 //   [0-3]  "RSSL"
@@ -178,7 +238,14 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
 
   this->mode               = new_mode;
-  this->fan_mode           = wire_to_fan_mode(fan_c);
+  this->fan_mode = wire_to_fan_mode(fan_c);
+  switch (fan_c) {
+    case '0': this->custom_fan_mode = std::string("1"); break;
+    case '1': this->custom_fan_mode = std::string("2"); break;
+    case '2': this->custom_fan_mode = std::string("3"); break;
+    case '6': this->custom_fan_mode = std::string("4"); break;
+    default: this->custom_fan_mode.reset(); break;
+  }
   this->target_temperature = temp_c;
   if (std::isnan(this->current_temperature) && indoor_temperature_sensor_ &&
       !std::isnan(indoor_temperature_sensor_->state)) {
@@ -207,7 +274,7 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
 
   float indoor_air  = static_cast<float>(static_cast<int8_t>(data[idx(POS_INDOOR_AIR_TEMP)]));
   float outdoor_air = static_cast<float>(static_cast<uint8_t>(data[idx(POS_OUTDOOR_AIR_TEMP)]) / 4 - 22);
-  float return_air  = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 10.0f;
+  float return_air  = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 4.0f;
   uint8_t comp_hz   = data[idx(POS_COMPRESSOR_HZ)];
   uint8_t in_fan    = data[idx(POS_INDOOR_FAN_SPEED)];
 
@@ -222,7 +289,7 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   if (compressor_frequency_sensor_)   compressor_frequency_sensor_->publish_state(comp_hz);
   if (indoor_fan_speed_sensor_)       indoor_fan_speed_sensor_->publish_state(in_fan);
 
-  ESP_LOGD(TAG, "after sensors: current_temperature=%.2f", this->current_temperature);
+  last_op_data_ms_ = millis();
   this->current_temperature = indoor_air;
   ESP_LOGD(TAG, "before publish: current_temperature=%.2f", this->current_temperature);
   this->publish_state();
@@ -291,24 +358,12 @@ climate::ClimateMode RcEx3Climate::wire_to_climate_mode(uint8_t v) {
   }
 }
 
-uint8_t RcEx3Climate::fan_mode_to_wire(climate::ClimateFanMode mode) {
-  switch (mode) {
-    case climate::CLIMATE_FAN_LOW:    return 0x00;
-    case climate::CLIMATE_FAN_MEDIUM: return 0x02;
-    case climate::CLIMATE_FAN_HIGH:   return 0x06;
-    case climate::CLIMATE_FAN_AUTO:
-    default:                          return 0x07;
-  }
+uint8_t RcEx3Climate::fan_mode_to_wire(climate::ClimateFanMode) {
+  return 0x07;
 }
 
 climate::ClimateFanMode RcEx3Climate::wire_to_fan_mode(char c) {
-  switch (c) {
-    case '0': return climate::CLIMATE_FAN_LOW;
-    case '1': return climate::CLIMATE_FAN_LOW;
-    case '2': return climate::CLIMATE_FAN_MEDIUM;
-    case '6': return climate::CLIMATE_FAN_HIGH;
-    default:  return climate::CLIMATE_FAN_AUTO;
-  }
+  return (c == '7') ? climate::CLIMATE_FAN_AUTO : climate::CLIMATE_FAN_ON;
 }
 
 size_t RcEx3Climate::hex_to_bytes(const char *hex, uint8_t *out, size_t max_out) {

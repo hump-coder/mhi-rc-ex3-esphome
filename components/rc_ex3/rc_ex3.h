@@ -32,10 +32,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
   float get_setup_priority() const override { return setup_priority::DATA; }
 
-  void set_op_data_interval(uint32_t minutes) { op_data_enabled_ = (minutes > 0); }
-
-  // No-op kept for YAML/climate.py compatibility
-  void set_post_command_delay(uint32_t) {}
+  void set_op_data_interval(uint32_t minutes) { op_data_interval_minutes_ = minutes; }
 
   void set_indoor_temperature_sensor(sensor::Sensor *s)    { indoor_temperature_sensor_    = s; }
   void set_outdoor_temperature_sensor(sensor::Sensor *s)   { outdoor_temperature_sensor_   = s; }
@@ -49,6 +46,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   void send_operational_data_request(bool second_page = false);
 
   void parse_packet(const char *raw, size_t len);
+  bool validate_checksum_and_extract_payload_(const char *raw, size_t len, char *payload, size_t payload_size, size_t &payload_len);
   void parse_status_response(const char *buf, size_t len);
   void parse_operational_data(const char *buf, size_t len);
 
@@ -65,9 +63,11 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   size_t  rx_len_{0};
   RxState rx_state_{RxState::WAITING_FOR_SOF};
 
-  bool op_data_enabled_{true};
+  uint32_t op_data_interval_minutes_{0};
+  uint32_t last_op_data_ms_{0};
   bool op_data_pending_{false};
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
+  bool rx_overflowed_{false};
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

@@ -52,7 +52,8 @@ void RcEx3Climate::setup() {
 
 void RcEx3Climate::update() {
   send_status_request();
-  op_data_requested_ = true;
+  if (op_data_enabled_)
+    op_data_requested_ = true;
 }
 
 // ─── Serial RX loop ──────────────────────────────────────────────────────────

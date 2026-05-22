@@ -32,6 +32,8 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
   float get_setup_priority() const override { return setup_priority::DATA; }
 
+  void set_enable_op_data(bool enable)  { op_data_enabled_ = enable; }
+
   // No-ops kept for YAML/climate.py compatibility
   void set_op_data_interval(uint32_t) {}
   void set_post_command_delay(uint32_t) {}
@@ -64,6 +66,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   size_t  rx_len_{0};
   RxState rx_state_{RxState::WAITING_FOR_SOF};
 
+  bool op_data_enabled_{true};
   bool op_data_pending_{false};
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
 

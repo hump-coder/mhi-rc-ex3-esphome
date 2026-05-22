@@ -22,6 +22,7 @@ RcEx3Climate = rc_ex3_ns.class_(
 
 CONF_OP_DATA_INTERVAL       = "op_data_interval"
 CONF_POST_COMMAND_DELAY     = "post_command_delay"
+CONF_ENABLE_OP_DATA         = "enable_op_data"
 CONF_INDOOR_TEMPERATURE  = "indoor_temperature"
 CONF_OUTDOOR_TEMPERATURE = "outdoor_temperature"
 CONF_RETURN_AIR_TEMPERATURE = "return_air_temperature"
@@ -32,6 +33,7 @@ CONFIG_SCHEMA = (
     climate.climate_schema(RcEx3Climate)
     .extend(
         {
+            cv.Optional(CONF_ENABLE_OP_DATA, default=True): cv.boolean,
             cv.Optional(CONF_OP_DATA_INTERVAL, default=0): cv.uint32_t,
             cv.Optional(CONF_POST_COMMAND_DELAY): cv.uint32_t,
             cv.Optional(CONF_INDOOR_TEMPERATURE): sensor.sensor_schema(
@@ -75,6 +77,7 @@ async def to_code(config):
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
 
+    cg.add(var.set_enable_op_data(config[CONF_ENABLE_OP_DATA]))
     cg.add(var.set_op_data_interval(config[CONF_OP_DATA_INTERVAL]))
 
     if CONF_POST_COMMAND_DELAY in config:

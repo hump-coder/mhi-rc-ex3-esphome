@@ -55,7 +55,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/hump-coder/mhi-rc-ex3-esphome.git
-      ref: 13dbfcf452869805369827628b2121c3b19d52c7
+      ref: 249f9b4925b96b1c897386adf628782fc012a1a7
     refresh: 0s
     components: [rc_ex3]
 
@@ -75,7 +75,7 @@ climate:
     name: "Living Room AC"
     uart_id: rc_ex3_uart
     update_interval: 5min   # status poll cadence
-    # op_data_interval and post_command_delay are no longer used; op_data follows every status poll
+    enable_op_data: true   # set false to disable diagnostic sensor requests (prevents "communicating with PC" mode)
 
     # ── Diagnostic sensors (all optional – remove any you don't need) ─────────
     indoor_temperature:

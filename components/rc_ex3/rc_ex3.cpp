@@ -293,9 +293,7 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
 
   last_op_data_ms_ = millis();
   this->current_temperature = indoor_air;
-  ESP_LOGD(TAG, "before publish: current_temperature=%.2f", this->current_temperature);
   this->publish_state();
-  ESP_LOGD(TAG, "after publish: current_temperature=%.2f", this->current_temperature);
 }
 
 // ─── Packet send helpers ─────────────────────────────────────────────────────

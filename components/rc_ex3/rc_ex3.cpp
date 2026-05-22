@@ -90,8 +90,9 @@ void RcEx3Climate::loop() {
   // Send the operational data request, keeping it separated from any
   // concurrent UART activity by one loop tick.
   if (op_data_pending_) {
-    op_data_pending_   = false;
-    rsr2_chain_count_  = 0;
+    op_data_pending_       = false;
+    rsr2_chain_active_     = false;
+    rsr2_chain_start_ms_   = 0;
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
   }
@@ -191,21 +192,26 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit responds RSR2 to our RSR1, and again to each RSR2 we send, until
-      // it is ready to deliver RSR1 data.  The second RSR2 that appears in the
-      // log is the unit continuing the handshake (it arrives before our own
-      // RSR2 transmission completes, so it cannot be a UART loopback echo).
-      // Keep the chain going up to RSR2_CHAIN_MAX to avoid a true runaway.
-      if (rsr2_chain_count_ < RSR2_CHAIN_MAX) {
-        rsr2_chain_count_++;
-        ESP_LOGD(TAG, "rx ← RSR2 handshake (%d/%d), sending RSR2", rsr2_chain_count_, RSR2_CHAIN_MAX);
+      // Unit responds RSR2 to our RSR1, and continues for each RSR2 we send,
+      // until it is ready to deliver RSR1 data.  Original code had no limit
+      // and op_data worked; use a time-based cutoff so the chain runs as long
+      // as the unit needs without a true runaway.
+      uint32_t now = millis();
+      if (!rsr2_chain_active_) {
+        rsr2_chain_active_   = true;
+        rsr2_chain_start_ms_ = now;
+      }
+      if (now - rsr2_chain_start_ms_ < RSR2_CHAIN_TIMEOUT_MS) {
+        ESP_LOGD(TAG, "rx ← RSR2 handshake (%.1fs), sending RSR2",
+                 (now - rsr2_chain_start_ms_) / 1000.0f);
         send_operational_data_request(true);
       } else {
-        ESP_LOGW(TAG, "rx ← RSR2 chain limit reached, giving up on op-data");
-        rsr2_chain_count_ = 0;
+        ESP_LOGW(TAG, "rx ← RSR2 chain timed out after %.1fs, giving up",
+                 (now - rsr2_chain_start_ms_) / 1000.0f);
+        rsr2_chain_active_ = false;
       }
     } else if (buf[3] == '1') {
-      rsr2_chain_count_ = 0;
+      rsr2_chain_active_ = false;
       parse_operational_data(buf, buflen);
     }
     return;

@@ -87,12 +87,13 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool     op_data_ever_requested_{false};
   bool     op_data_pending_{false};
 
-  // RSR2 handshake chain counter.  The unit sends RSR2 in response to RSR1,
-  // and continues doing so in response to each RSR2 we send; the chain
-  // terminates when the unit sends RSR1 data.  Cap the chain to avoid
-  // running forever if the unit never delivers data.
-  static const uint8_t RSR2_CHAIN_MAX = 10;
-  uint8_t  rsr2_chain_count_{0};
+  // RSR2 handshake chain.  The unit sends RSR2 in response to RSR1, and again
+  // for each RSR2 we send; the chain terminates when the unit sends RSR1 data.
+  // Track start time so the chain can run as long as the unit needs (up to
+  // RSR2_CHAIN_TIMEOUT_MS) without an artificial count cap.
+  static const uint32_t RSR2_CHAIN_TIMEOUT_MS = 10000;
+  uint32_t rsr2_chain_start_ms_{0};
+  bool     rsr2_chain_active_{false};
 
   uint32_t post_command_delay_ms_{0};
 

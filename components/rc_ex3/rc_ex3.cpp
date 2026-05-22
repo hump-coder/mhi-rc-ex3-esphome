@@ -20,7 +20,6 @@ climate::ClimateTraits RcEx3Climate::traits() {
     climate::CLIMATE_MODE_FAN_ONLY,
   });
   traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO});
-  traits.set_supported_custom_fan_modes({"1", "2", "3", "4"});
   traits.set_visual_min_temperature(16.0f);
   traits.set_visual_max_temperature(30.0f);
   traits.set_visual_temperature_step(0.5f);
@@ -30,6 +29,7 @@ climate::ClimateTraits RcEx3Climate::traits() {
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 void RcEx3Climate::setup() {
+  this->set_supported_custom_fan_modes({"1", "2", "3", "4"});
   this->mode                = climate::CLIMATE_MODE_OFF;
   this->target_temperature  = 22.0f;
   this->current_temperature = NAN;

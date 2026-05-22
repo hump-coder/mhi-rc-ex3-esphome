@@ -65,6 +65,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   RxState rx_state_{RxState::WAITING_FOR_SOF};
 
   bool op_data_pending_{false};
+  bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

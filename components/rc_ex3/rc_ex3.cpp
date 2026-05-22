@@ -52,6 +52,7 @@ void RcEx3Climate::setup() {
 
 void RcEx3Climate::update() {
   send_status_request();
+  op_data_requested_ = true;
 }
 
 // ─── Serial RX loop ──────────────────────────────────────────────────────────
@@ -136,10 +137,13 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
 
   ESP_LOGV(TAG, "rx: %s", buf);
 
-  // RSSL1x → climate status; queue op_data request for next loop tick
+  // RSSL1x → climate status; queue op_data only if this update() cycle requested it
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L' && buf[4] == '1') {
     parse_status_response(buf, buflen);
-    op_data_pending_ = true;
+    if (op_data_requested_) {
+      op_data_requested_ = false;
+      op_data_pending_   = true;
+    }
     return;
   }
 

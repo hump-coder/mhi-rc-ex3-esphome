@@ -8,28 +8,12 @@
 namespace esphome {
 namespace rc_ex3 {
 
-// Byte positions in the operational data response (after the 4-byte "RSR1" header)
 static const uint8_t HEADER_LEN           = 4;
-static const uint8_t POS_OPERATION_MODE   = 8;
 static const uint8_t POS_INDOOR_AIR_TEMP  = 9;
-static const uint8_t POS_TARGET_TEMP      = 7;
 static const uint8_t POS_OUTDOOR_AIR_TEMP = 26;
 static const uint8_t POS_RETURN_AIR_TEMP  = 27;
 static const uint8_t POS_COMPRESSOR_HZ    = 32;
-static const uint8_t POS_INDOOR_FAN_SPEED  = 45;
-static const uint8_t POS_CURRENT          = 42;
-
-struct HvacData {
-  int8_t   indoor_air_temp;
-  int8_t   outdoor_air_temp;
-  int8_t   return_air_temp;
-  int8_t   target_temp;
-  uint8_t  operation_mode;
-  uint8_t  compressor_hz;
-  uint8_t  indoor_fan_speed;
-  int8_t   current;
-  bool     valid;
-};
+static const uint8_t POS_INDOOR_FAN_SPEED = 45;
 
 enum class RxState : uint8_t {
   WAITING_FOR_SOF,
@@ -48,14 +32,15 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
   float get_setup_priority() const override { return setup_priority::DATA; }
 
-  void set_op_data_interval(uint32_t minutes)              { op_data_interval_ms_ = minutes * 60000UL; }
-  void set_post_command_delay(uint32_t seconds)            { post_command_delay_ms_ = seconds * 1000UL; }
+  // No-ops kept for YAML/climate.py compatibility
+  void set_op_data_interval(uint32_t) {}
+  void set_post_command_delay(uint32_t) {}
 
-  void set_indoor_temperature_sensor(sensor::Sensor *s)   { indoor_temperature_sensor_   = s; }
-  void set_outdoor_temperature_sensor(sensor::Sensor *s)  { outdoor_temperature_sensor_  = s; }
+  void set_indoor_temperature_sensor(sensor::Sensor *s)    { indoor_temperature_sensor_    = s; }
+  void set_outdoor_temperature_sensor(sensor::Sensor *s)   { outdoor_temperature_sensor_   = s; }
   void set_return_air_temperature_sensor(sensor::Sensor *s){ return_air_temperature_sensor_ = s; }
-  void set_compressor_frequency_sensor(sensor::Sensor *s) { compressor_frequency_sensor_ = s; }
-  void set_indoor_fan_speed_sensor(sensor::Sensor *s)     { indoor_fan_speed_sensor_     = s; }
+  void set_compressor_frequency_sensor(sensor::Sensor *s)  { compressor_frequency_sensor_  = s; }
+  void set_indoor_fan_speed_sensor(sensor::Sensor *s)      { indoor_fan_speed_sensor_      = s; }
 
  protected:
   void send_command(const char *payload, size_t len);
@@ -69,42 +54,17 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint8_t calc_checksum(const char *data, size_t len);
   size_t  hex_to_bytes(const char *hex, uint8_t *out, size_t max_out);
 
-  static uint8_t fan_mode_to_wire(climate::ClimateFanMode mode);
-  static uint8_t custom_fan_mode_to_wire(const char *mode);
-  static uint8_t climate_mode_to_wire(climate::ClimateMode mode);
+  static uint8_t              fan_mode_to_wire(climate::ClimateFanMode mode);
+  static climate::ClimateFanMode wire_to_fan_mode(char c);
+  static uint8_t              climate_mode_to_wire(climate::ClimateMode mode);
   static climate::ClimateMode wire_to_climate_mode(uint8_t wire_val);
-  void apply_wire_fan_mode(char c);
 
-  // RX ring buffer + state machine
   static const size_t RX_BUF_SIZE = 256;
-  char     rx_buf_[RX_BUF_SIZE];
-  size_t   rx_len_{0};
-  RxState  rx_state_{RxState::WAITING_FOR_SOF};
+  char    rx_buf_[RX_BUF_SIZE];
+  size_t  rx_len_{0};
+  RxState rx_state_{RxState::WAITING_FOR_SOF};
 
-  // Operational data polling
-  uint32_t op_data_interval_ms_{0};
-  uint32_t last_op_data_ms_{0};
-  bool     op_data_ever_requested_{false};
-  bool     op_data_pending_{false};
-
-  // RSR2 handshake chain.
-  // The unit responds RSR2 when it is not yet ready to deliver RSR1 data.
-  // Protocol requires echoing RSR2 (RSR20000E9) back; the unit keeps sending
-  // RSR2 until it is ready, then switches to RSR1 data.
-  // Match the original rc3.cpp behaviour: echo 500 ms after receiving RSR2.
-  static const uint32_t RSR2_CHAIN_TIMEOUT_MS  = 120000;  // 2 min overall limit
-  static const uint32_t RSR2_ECHO_DELAY_MS     =     500;  // delay after receipt before echoing
-  uint32_t rsr2_chain_start_ms_{0};
-  uint32_t rsr2_last_received_ms_{0};  // millis() of most-recent RSR2 receipt
-  uint32_t rsr2_echo_ms_{0};           // millis() of most-recent RSR2 echo sent
-  bool     rsr2_chain_active_{false};
-
-  uint32_t post_command_delay_ms_{0};
-
-  // Suppress the controller echo that arrives after a control() command.
-  // The echo reflects the pre-command state, so we ignore it to avoid
-  // stomping on our own optimistic publish.
-  bool     suppress_next_status_{false};
+  bool op_data_pending_{false};
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

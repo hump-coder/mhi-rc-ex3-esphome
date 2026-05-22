@@ -6,21 +6,11 @@ namespace rc_ex3 {
 
 static const char *const TAG = "rc_ex3";
 
-// set_supports_current_temperature was added in a later ESPHome release;
-// call it when present, no-op otherwise.
-namespace {
-template<typename T>
-auto set_current_temp_support(T &t, bool v)
-    -> decltype(t.set_supports_current_temperature(v), void()) {
-  t.set_supports_current_temperature(v);
-}
-void set_current_temp_support(...) {}
-}
-
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
 climate::ClimateTraits RcEx3Climate::traits() {
   auto traits = climate::ClimateTraits();
+  traits.set_supports_current_temperature(true);
   traits.set_supported_modes({
     climate::CLIMATE_MODE_OFF,
     climate::CLIMATE_MODE_HEAT_COOL,
@@ -35,7 +25,6 @@ climate::ClimateTraits RcEx3Climate::traits() {
     climate::CLIMATE_FAN_MEDIUM,
     climate::CLIMATE_FAN_HIGH,
   });
-  set_current_temp_support(traits, true);
   traits.set_visual_min_temperature(16.0f);
   traits.set_visual_max_temperature(30.0f);
   traits.set_visual_temperature_step(0.5f);
@@ -45,24 +34,13 @@ climate::ClimateTraits RcEx3Climate::traits() {
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 void RcEx3Climate::setup() {
-  // Discard any stale bytes left in the RX buffer from a previous session.
-  while (this->available()) { uint8_t b; this->read_byte(&b); }
-  this->mode               = climate::CLIMATE_MODE_OFF;
-  this->target_temperature = 22.0f;
+  this->mode                = climate::CLIMATE_MODE_OFF;
+  this->target_temperature  = 22.0f;
   this->current_temperature = NAN;
-  send_status_request();
 }
 
 void RcEx3Climate::update() {
   send_status_request();
-  // When op_data_interval is disabled (0), piggyback an op_data request on
-  // every status poll so current_temperature updates even after a startup
-  // failure (e.g. unit was off at boot).
-  if (op_data_interval_ms_ == 0 && !op_data_pending_ && !rsr2_chain_active_) {
-    op_data_pending_        = true;
-    op_data_ever_requested_ = true;
-    last_op_data_ms_        = millis();
-  }
 }
 
 // ─── Serial RX loop ──────────────────────────────────────────────────────────
@@ -90,36 +68,11 @@ void RcEx3Climate::loop() {
     }
   }
 
-  // Fire op_data once 10 s after startup regardless of yaml op_data_interval setting.
-  // Suppress if a chain is already active (chain will retry on its own).
-  if (!op_data_ever_requested_ && millis() >= 10000) {
-    ESP_LOGI(TAG, "startup op-data request (%.1f s after boot)", millis() / 1000.0f);
-    op_data_pending_        = true;
-    op_data_ever_requested_ = true;
-    last_op_data_ms_        = millis();
-  }
-
-  // Interval-based op_data requests — only when no RSR2 echo is pending.
-  if (op_data_interval_ms_ > 0 && op_data_ever_requested_ && !op_data_pending_ &&
-      rsr2_last_received_ms_ == 0 &&
-      (millis() - last_op_data_ms_) >= op_data_interval_ms_) {
-    op_data_pending_ = true;
-    last_op_data_ms_ = millis();
-  }
-
-  // Send a fresh RSR1 op-data request (startup or interval-triggered).
+  // Send the op_data request once the status response has been received,
+  // separated by one loop tick to avoid overlapping Tx.
   if (op_data_pending_) {
-    op_data_pending_       = false;
-    rsr2_last_received_ms_ = 0;  // cancel any leftover echo from a previous exchange
-    ESP_LOGD(TAG, "tx → RSR1 op-data request");
+    op_data_pending_ = false;
     send_operational_data_request(false);
-  }
-
-  // Echo RSR20000E9 exactly 500ms after receiving RSR2 (matches original delay(500)).
-  if (rsr2_last_received_ms_ > 0 && (millis() - rsr2_last_received_ms_) >= 500) {
-    rsr2_last_received_ms_ = 0;
-    ESP_LOGD(TAG, "tx → RSR2 echo");
-    send_operational_data_request(true);
   }
 }
 
@@ -133,13 +86,9 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   if (call.get_fan_mode().has_value())
     this->fan_mode = *call.get_fan_mode();
 
-  // Build combined setClimate packet (mirrors rc3.cpp setClimate).
-  uint8_t power = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
-  uint8_t mode  = climate_mode_to_wire(this->mode);
-  uint8_t fan   = fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
-
-  // Temperature encoded as (°C * 2) → wire byte, matching original degrees/5
-  // where degrees was passed in tenths: wire = (temp_tenths / 5) = (temp * 10 / 5) = temp * 2
+  uint8_t power    = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
+  uint8_t mode     = climate_mode_to_wire(this->mode);
+  uint8_t fan      = fan_mode_to_wire(this->fan_mode.value_or(climate::CLIMATE_FAN_AUTO));
   uint8_t temp_wire = static_cast<uint8_t>(this->target_temperature * 2.0f);
 
   char buf[64];
@@ -147,32 +96,16 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
     "RSSL13FF0001%.2x02%.2x03%.2x04FF0503%.2x06FF0FFF43FF",
     power, mode, fan, temp_wire);
 
-  ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C) payload=%s",
-           power, mode, fan, temp_wire, this->target_temperature, buf);
+  ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C)",
+           power, mode, fan, temp_wire, this->target_temperature);
 
-  suppress_next_status_ = true;
   send_command(buf, len);
   this->publish_state();
-
-  if (post_command_delay_ms_ > 0) {
-    this->set_timeout("post_cmd_status", post_command_delay_ms_, [this]() {
-      ESP_LOGD(TAG, "post-command status request");
-      send_status_request();
-    });
-  }
 }
 
 // ─── Packet dispatch ─────────────────────────────────────────────────────────
 
 void RcEx3Climate::parse_packet(const char *raw, size_t len) {
-  // Log raw bytes as hex so unsolicited controller packets are visible
-  char hex_dump[512];
-  size_t hpos = 0;
-  for (size_t i = 0; i < len && hpos < sizeof(hex_dump) - 3; i++)
-    hpos += snprintf(hex_dump + hpos, sizeof(hex_dump) - hpos, "%02X ", (uint8_t)raw[i]);
-  ESP_LOGD(TAG, "rx raw (%d bytes): %s", (int)len, hex_dump);
-
-  // Filter raw bytes: skip until first 'R', keep printable ASCII only.
   char buf[256];
   size_t buflen = 0;
   bool started = false;
@@ -187,50 +120,36 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   }
   buf[buflen] = '\0';
 
-  if (buflen < 5) {
-    ESP_LOGD(TAG, "rx filtered too short (%d chars), discarding", (int)buflen);
+  if (buflen < 5)
     return;
-  }
 
-  ESP_LOGD(TAG, "rx filtered: %s", buf);
+  ESP_LOGV(TAG, "rx: %s", buf);
 
-  // RSSL → climate status or command ACK
-  if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L') {
-    if (buf[4] == '1') {
-      parse_status_response(buf, buflen);
-    } else if (buf[4] == '0') {
-      // RSSL0x = command ACK from the unit.  Clear the post-command suppression
-      // flag here; without this the flag stays set and the next RSSL11 broadcast
-      // (the legitimate 5-minute status) gets wrongly discarded.
-      suppress_next_status_ = false;
-      ESP_LOGD(TAG, "rx ← RSSL0x command ACK");
-    } else {
-      ESP_LOGD(TAG, "rx unhandled RSSL: %s", buf);
-    }
+  // RSSL1x → climate status; queue op_data request for next loop tick
+  if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L' && buf[4] == '1') {
+    parse_status_response(buf, buflen);
+    op_data_pending_ = true;
     return;
   }
 
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Schedule echo of RSR20000E9 after 500ms (matching original delay(500)).
-      rsr2_last_received_ms_ = millis();
-      ESP_LOGD(TAG, "rx ← RSR2, echo scheduled in 500ms");
+      // Unit not yet ready; echo RSR2 immediately and it will eventually respond RSR1
+      send_operational_data_request(true);
     } else if (buf[3] == '1') {
-      rsr2_last_received_ms_ = 0;  // cancel any pending echo
       parse_operational_data(buf, buflen);
     }
     return;
   }
 
-  ESP_LOGD(TAG, "rx unhandled packet: %s", buf);
+  ESP_LOGD(TAG, "rx unhandled: %s", buf);
 }
 
 // ─── Status response parser ───────────────────────────────────────────────────
 //
-// Response (filtered ASCII starting at 'R') character positions:
 //   [0-3]  "RSSL"
-//   [4]    '1'  (length nibble hi)
+//   [4]    '1'
 //   [13]   power  ('0'=off, '1'=on)
 //   [17]   mode   ('0'=auto,'1'=dry,'2'=cool,'3'=fan,'4'=heat)
 //   [21]   fan    ('0'=spd1,'1'=spd2,'2'=spd3,'6'=spd4,other=auto)
@@ -240,37 +159,30 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   if (len < 32)
     return;
 
-  if (suppress_next_status_) {
-    suppress_next_status_ = false;
-    ESP_LOGI(TAG, "rx ← suppressed echo (post-command), ignoring");
-    return;
-  }
-
   char pwr_c  = buf[13];
   char mode_c = buf[17];
   char fan_c  = buf[21];
 
   char tmp[3] = {buf[30], buf[31], '\0'};
   unsigned int raw_temp = static_cast<unsigned int>(strtol(tmp, nullptr, 16));
-  float temp_c = raw_temp * 0.5f;  // wire value = °C * 2
+  float temp_c = raw_temp * 0.5f;
 
   bool is_on = (pwr_c == '1');
   climate::ClimateMode new_mode = is_on ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
 
-  ESP_LOGI(TAG, "rx ← power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
+  ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
 
-  this->mode             = new_mode;
+  this->mode               = new_mode;
+  this->fan_mode           = wire_to_fan_mode(fan_c);
   this->target_temperature = temp_c;
-  apply_wire_fan_mode(fan_c);
   this->publish_state();
-
 }
 
 // ─── Operational data parser ──────────────────────────────────────────────────
 //
-// Request:  RSR10000E8  → page 1 (most useful data)
+// Request:  RSR10000E8  → page 1
 // Response: RSR1<hex-encoded binary blob>
-// After HEADER_LEN=4 chars ("RSR1"), the rest is hex pairs encoding raw bytes.
+// After HEADER_LEN=4 ("RSR1"), the rest is hex pairs encoding raw bytes.
 
 void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   const char *hex_data = buf + HEADER_LEN;
@@ -278,35 +190,31 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   size_t data_len = hex_to_bytes(hex_data, data, sizeof(data));
 
   if (data_len < (POS_INDOOR_FAN_SPEED - HEADER_LEN + 1)) {
-    ESP_LOGW(TAG, "op-data response too short (%d bytes)", (int)data_len);
+    ESP_LOGW(TAG, "op-data too short (%d bytes)", (int)data_len);
     return;
   }
 
   auto idx = [](uint8_t pos) { return pos - HEADER_LEN; };
 
-  float indoor_air   = static_cast<float>(static_cast<int8_t>(data[idx(POS_INDOOR_AIR_TEMP)]));
-  float outdoor_air  = static_cast<float>(static_cast<uint8_t>(data[idx(POS_OUTDOOR_AIR_TEMP)]) / 4 - 22);
-  float return_air   = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 10.0f;
+  float indoor_air  = static_cast<float>(static_cast<int8_t>(data[idx(POS_INDOOR_AIR_TEMP)]));
+  float outdoor_air = static_cast<float>(static_cast<uint8_t>(data[idx(POS_OUTDOOR_AIR_TEMP)]) / 4 - 22);
+  float return_air  = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 10.0f;
+  uint8_t comp_hz   = data[idx(POS_COMPRESSOR_HZ)];
+  uint8_t in_fan    = data[idx(POS_INDOOR_FAN_SPEED)];
 
-  uint8_t comp_hz    = data[idx(POS_COMPRESSOR_HZ)];
-  uint8_t in_fan     = data[idx(POS_INDOOR_FAN_SPEED)];
-
-  ESP_LOGI(TAG, "op-data → indoor=%.1f°C outdoor=%.1f°C return=%.1f°C comp=%dHz fan=%d",
-           indoor_air, outdoor_air, return_air, comp_hz, in_fan);
   ESP_LOGD(TAG, "op-data raw: indoor=%d outdoor=%d return=%d",
            data[idx(POS_INDOOR_AIR_TEMP)], data[idx(POS_OUTDOOR_AIR_TEMP)], data[idx(POS_RETURN_AIR_TEMP)]);
+  ESP_LOGI(TAG, "op-data → indoor=%.1f°C outdoor=%.1f°C return=%.1f°C comp=%dHz fan=%d",
+           indoor_air, outdoor_air, return_air, comp_hz, in_fan);
 
-  // Update current_temperature from indoor sensor and republish climate state
   this->current_temperature = indoor_air;
-  ESP_LOGI(TAG, "current_temperature pre-publish: %.1f°C", this->current_temperature);
   this->publish_state();
-  ESP_LOGI(TAG, "current_temperature post-publish: %.1f°C", this->current_temperature);
 
-  if (indoor_temperature_sensor_)    indoor_temperature_sensor_->publish_state(indoor_air);
-  if (outdoor_temperature_sensor_)   outdoor_temperature_sensor_->publish_state(outdoor_air);
+  if (indoor_temperature_sensor_)     indoor_temperature_sensor_->publish_state(indoor_air);
+  if (outdoor_temperature_sensor_)    outdoor_temperature_sensor_->publish_state(outdoor_air);
   if (return_air_temperature_sensor_) return_air_temperature_sensor_->publish_state(return_air);
-  if (compressor_frequency_sensor_)  compressor_frequency_sensor_->publish_state(comp_hz);
-  if (indoor_fan_speed_sensor_)      indoor_fan_speed_sensor_->publish_state(in_fan);
+  if (compressor_frequency_sensor_)   compressor_frequency_sensor_->publish_state(comp_hz);
+  if (indoor_fan_speed_sensor_)       indoor_fan_speed_sensor_->publish_state(in_fan);
 }
 
 // ─── Packet send helpers ─────────────────────────────────────────────────────
@@ -332,7 +240,6 @@ void RcEx3Climate::send_command(const char *payload, size_t len) {
 }
 
 void RcEx3Climate::send_status_request() {
-  // Payload + pre-calculated checksum 0x25 ("RSSL12FF0001FF02FF03FF04FF05FF06FF0FFF43FF" → sum=0x25)
   const char *query = "RSSL12FF0001FF02FF03FF04FF05FF06FF0FFF43FF25";
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)
@@ -341,7 +248,6 @@ void RcEx3Climate::send_status_request() {
 }
 
 void RcEx3Climate::send_operational_data_request(bool second_page) {
-  // "RSR10000E8" or "RSR20000E9" — checksums are pre-embedded in the literals
   const char *query = second_page ? "RSR20000E9" : "RSR10000E8";
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)
@@ -374,26 +280,22 @@ climate::ClimateMode RcEx3Climate::wire_to_climate_mode(uint8_t v) {
 }
 
 uint8_t RcEx3Climate::fan_mode_to_wire(climate::ClimateFanMode mode) {
-  // Only CLIMATE_FAN_AUTO is a built-in mode; custom modes "1"–"4" handled separately.
-  return 0x07;
+  switch (mode) {
+    case climate::CLIMATE_FAN_LOW:    return 0x00;
+    case climate::CLIMATE_FAN_MEDIUM: return 0x02;
+    case climate::CLIMATE_FAN_HIGH:   return 0x06;
+    case climate::CLIMATE_FAN_AUTO:
+    default:                          return 0x07;
+  }
 }
 
-uint8_t RcEx3Climate::custom_fan_mode_to_wire(const char *mode) {
-  if (mode == nullptr)          return 0x07;
-  if (strcmp(mode, "1") == 0)   return 0x00;
-  if (strcmp(mode, "2") == 0)   return 0x01;
-  if (strcmp(mode, "3") == 0)   return 0x02;
-  if (strcmp(mode, "4") == 0)   return 0x06;
-  return 0x07;
-}
-
-void RcEx3Climate::apply_wire_fan_mode(char c) {
+climate::ClimateFanMode RcEx3Climate::wire_to_fan_mode(char c) {
   switch (c) {
-    case '0': this->fan_mode = climate::CLIMATE_FAN_LOW;    break;
-    case '1': this->fan_mode = climate::CLIMATE_FAN_LOW;    break;
-    case '2': this->fan_mode = climate::CLIMATE_FAN_MEDIUM; break;
-    case '6': this->fan_mode = climate::CLIMATE_FAN_HIGH;   break;
-    default:  this->fan_mode = climate::CLIMATE_FAN_AUTO;   break;
+    case '0': return climate::CLIMATE_FAN_LOW;
+    case '1': return climate::CLIMATE_FAN_LOW;
+    case '2': return climate::CLIMATE_FAN_MEDIUM;
+    case '6': return climate::CLIMATE_FAN_HIGH;
+    default:  return climate::CLIMATE_FAN_AUTO;
   }
 }
 

@@ -121,10 +121,14 @@ void RcEx3Climate::loop() {
   if (rsr2_chain_active_) {
     uint32_t now = millis();
     if (now - rsr2_chain_start_ms_ >= RSR2_CHAIN_TIMEOUT_MS) {
-      ESP_LOGW(TAG, "RSR1 wait timed out after %.1fs, giving up",
+      ESP_LOGW(TAG, "RSR1 wait timed out after %.1fs, retrying",
                (now - rsr2_chain_start_ms_) / 1000.0f);
-      rsr2_chain_active_ = false;
-      last_op_data_ms_   = millis();
+      rsr2_chain_active_   = false;
+      rsr2_chain_start_ms_ = now;
+      ESP_LOGD(TAG, "tx → RSR1 op-data request (retry)");
+      send_operational_data_request(false);
+      rsr2_chain_active_   = true;
+      rsr2_chain_start_ms_ = millis();
     }
   }
 }

@@ -116,21 +116,15 @@ void RcEx3Climate::loop() {
     send_operational_data_request(false);
   }
 
-  // RSR2 echo: mirror original rc3.cpp behaviour — echo RSR2 exactly
-  // RSR2_ECHO_DELAY_MS after receiving it (unit eventually replies with RSR1).
+  // Wait passively for RSR1 after the initial request — no RSR2 echoes.
+  // Testing whether the unit delivers RSR1 on its own without echoing.
   if (rsr2_chain_active_) {
     uint32_t now = millis();
     if (now - rsr2_chain_start_ms_ >= RSR2_CHAIN_TIMEOUT_MS) {
-      ESP_LOGW(TAG, "RSR2 handshake timed out after %.1fs, giving up",
+      ESP_LOGW(TAG, "RSR1 wait timed out after %.1fs, giving up",
                (now - rsr2_chain_start_ms_) / 1000.0f);
       rsr2_chain_active_ = false;
       last_op_data_ms_   = millis();
-    } else if (rsr2_last_received_ms_ > rsr2_echo_ms_ &&
-               (now - rsr2_last_received_ms_) >= RSR2_ECHO_DELAY_MS) {
-      rsr2_echo_ms_ = now;
-      ESP_LOGD(TAG, "tx → RSR2 echo (%.1fs elapsed)",
-               (now - rsr2_chain_start_ms_) / 1000.0f);
-      send_operational_data_request(true);
     }
   }
 }

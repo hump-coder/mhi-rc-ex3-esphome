@@ -79,8 +79,16 @@ void RcEx3Climate::loop() {
     last_op_data_ms_        = millis();
   }
 
-  // Send the operational data request once the status has been received,
-  // keeping the two transactions separated by one loop tick.
+  // Interval-based op_data requests fired on their own schedule, not tied to
+  // the status poll cadence (avoids quantization when both intervals are equal).
+  if (op_data_interval_ms_ > 0 && op_data_ever_requested_ && !op_data_pending_ &&
+      (millis() - last_op_data_ms_) >= op_data_interval_ms_) {
+    op_data_pending_  = true;
+    last_op_data_ms_  = millis();
+  }
+
+  // Send the operational data request, keeping it separated from any
+  // concurrent UART activity by one loop tick.
   if (op_data_pending_) {
     op_data_pending_ = false;
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
@@ -228,13 +236,6 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   apply_wire_fan_mode(fan_c);
   this->publish_state();
 
-  if (op_data_interval_ms_ > 0) {
-    uint32_t now = millis();
-    if (op_data_ever_requested_ && (now - last_op_data_ms_) >= op_data_interval_ms_) {
-      op_data_pending_  = true;
-      last_op_data_ms_  = now;
-    }
-  }
 }
 
 // ─── Operational data parser ──────────────────────────────────────────────────

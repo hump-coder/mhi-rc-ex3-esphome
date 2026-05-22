@@ -101,13 +101,15 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   uint8_t power    = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
   uint8_t mode     = climate_mode_to_wire(this->mode);
   uint8_t fan = 0x07;
-  if (call.get_custom_fan_mode().has_value())
-    this->custom_fan_mode = *call.get_custom_fan_mode();
-  if (this->custom_fan_mode.has_value()) {
-    if (*this->custom_fan_mode == "1") fan = 0x00;
-    else if (*this->custom_fan_mode == "2") fan = 0x01;
-    else if (*this->custom_fan_mode == "3") fan = 0x02;
-    else if (*this->custom_fan_mode == "4") fan = 0x06;
+  auto custom_fan_mode = call.get_custom_fan_mode();
+  if (!custom_fan_mode.empty())
+    this->requested_custom_fan_mode_ = custom_fan_mode.c_str();
+
+  if (!this->requested_custom_fan_mode_.empty()) {
+    if (this->requested_custom_fan_mode_ == "1") fan = 0x00;
+    else if (this->requested_custom_fan_mode_ == "2") fan = 0x01;
+    else if (this->requested_custom_fan_mode_ == "3") fan = 0x02;
+    else if (this->requested_custom_fan_mode_ == "4") fan = 0x06;
     this->fan_mode = climate::CLIMATE_FAN_ON;
   } else {
     this->fan_mode = climate::CLIMATE_FAN_AUTO;
@@ -240,11 +242,11 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   this->mode               = new_mode;
   this->fan_mode = wire_to_fan_mode(fan_c);
   switch (fan_c) {
-    case '0': this->custom_fan_mode = std::string("1"); break;
-    case '1': this->custom_fan_mode = std::string("2"); break;
-    case '2': this->custom_fan_mode = std::string("3"); break;
-    case '6': this->custom_fan_mode = std::string("4"); break;
-    default: this->custom_fan_mode.reset(); break;
+    case '0': this->requested_custom_fan_mode_ = "1"; break;
+    case '1': this->requested_custom_fan_mode_ = "2"; break;
+    case '2': this->requested_custom_fan_mode_ = "3"; break;
+    case '6': this->requested_custom_fan_mode_ = "4"; break;
+    default: this->requested_custom_fan_mode_.clear(); break;
   }
   this->target_temperature = temp_c;
   if (std::isnan(this->current_temperature) && indoor_temperature_sensor_ &&

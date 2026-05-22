@@ -6,22 +6,11 @@ namespace rc_ex3 {
 
 static const char *const TAG = "rc_ex3";
 
-// set_supports_current_temperature was added in a later ESPHome release;
-// call it when present, no-op otherwise.
-namespace {
-template<typename T>
-auto set_current_temp_support(T &t, bool v)
-    -> decltype(t.set_supports_current_temperature(v), void()) {
-  t.set_supports_current_temperature(v);
-}
-void set_current_temp_support(...) {}
-}
-
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
 climate::ClimateTraits RcEx3Climate::traits() {
   auto traits = climate::ClimateTraits();
-  set_current_temp_support(traits, true);
+  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
   traits.set_supported_modes({
     climate::CLIMATE_MODE_OFF,
     climate::CLIMATE_MODE_HEAT_COOL,
@@ -191,6 +180,10 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   this->mode               = new_mode;
   this->fan_mode           = wire_to_fan_mode(fan_c);
   this->target_temperature = temp_c;
+  if (std::isnan(this->current_temperature) && indoor_temperature_sensor_ &&
+      !std::isnan(indoor_temperature_sensor_->state)) {
+    this->current_temperature = indoor_temperature_sensor_->state;
+  }
   this->publish_state();
 }
 

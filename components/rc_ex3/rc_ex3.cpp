@@ -171,9 +171,19 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
 
   ESP_LOGD(TAG, "rx filtered: %s", buf);
 
-  // RSSL1x → climate status response
-  if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L' && buf[4] == '1') {
-    parse_status_response(buf, buflen);
+  // RSSL → climate status or command ACK
+  if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L') {
+    if (buf[4] == '1') {
+      parse_status_response(buf, buflen);
+    } else if (buf[4] == '0') {
+      // RSSL0x = command ACK from the unit.  Clear the post-command suppression
+      // flag here; without this the flag stays set and the next RSSL11 broadcast
+      // (the legitimate 5-minute status) gets wrongly discarded.
+      suppress_next_status_ = false;
+      ESP_LOGD(TAG, "rx ← RSSL0x command ACK");
+    } else {
+      ESP_LOGD(TAG, "rx unhandled RSSL: %s", buf);
+    }
     return;
   }
 

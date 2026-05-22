@@ -21,6 +21,7 @@ climate::ClimateTraits RcEx3Climate::traits() {
   traits.set_supported_fan_modes({
     climate::CLIMATE_FAN_AUTO,
   });
+  traits.set_supports_current_temperature(true);
   traits.set_visual_min_temperature(16.0f);
   traits.set_visual_max_temperature(30.0f);
   traits.set_visual_temperature_step(0.5f);

@@ -87,15 +87,15 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool     op_data_ever_requested_{false};
   bool     op_data_pending_{false};
 
-  // RSR2 / RSR1 retry chain.
+  // RSR2 handshake chain.
   // The unit responds RSR2 when it is not yet ready to deliver RSR1 data.
-  // Strategy: do NOT echo RSR2 (that keeps the unit stuck in a mirror loop).
-  // Instead, resend RSR1 every RSR1_RETRY_INTERVAL_MS until RSR1 data arrives
-  // or RSR2_CHAIN_TIMEOUT_MS has elapsed.
-  static const uint32_t RSR2_CHAIN_TIMEOUT_MS   = 60000;  // 60 s overall limit
-  static const uint32_t RSR1_RETRY_INTERVAL_MS  =  3000;  //  3 s between retries
+  // Protocol requires echoing RSR2 (RSR20000E9) back; the unit keeps sending
+  // RSR2 until it is ready, then switches to RSR1 data.
+  // Rate-limit echoes to RSR2_ECHO_INTERVAL_MS to prevent a mirror-loop runaway.
+  static const uint32_t RSR2_CHAIN_TIMEOUT_MS  = 120000;  // 2 min overall limit
+  static const uint32_t RSR2_ECHO_INTERVAL_MS  =   1000;  //  1 s between echoes
   uint32_t rsr2_chain_start_ms_{0};
-  uint32_t rsr1_retry_ms_{0};
+  uint32_t rsr2_echo_ms_{0};
   bool     rsr2_chain_active_{false};
 
   uint32_t post_command_delay_ms_{0};

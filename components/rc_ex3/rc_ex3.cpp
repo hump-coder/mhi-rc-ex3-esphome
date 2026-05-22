@@ -98,25 +98,26 @@ void RcEx3Climate::loop() {
     op_data_pending_       = false;
     rsr2_chain_active_     = false;
     rsr2_chain_start_ms_   = 0;
-    rsr1_retry_ms_         = millis();
+    rsr2_echo_ms_          = millis();
     ESP_LOGD(TAG, "tx → RSR1 op-data request");
     send_operational_data_request(false);
   }
 
-  // RSR1 retry loop: if we got RSR2 (unit not ready), keep resending RSR1
-  // every RSR1_RETRY_INTERVAL_MS until we receive RSR1 data or time out.
+  // RSR2 echo loop: protocol requires echoing RSR20000E9 back to the unit
+  // after each RSR2 it sends; rate-limited to RSR2_ECHO_INTERVAL_MS to
+  // prevent a mirror-loop runaway.  Unit eventually responds with RSR1 data.
   if (rsr2_chain_active_) {
     uint32_t now = millis();
     if (now - rsr2_chain_start_ms_ >= RSR2_CHAIN_TIMEOUT_MS) {
-      ESP_LOGW(TAG, "RSR1 retry timed out after %.1fs, giving up",
+      ESP_LOGW(TAG, "RSR2 handshake timed out after %.1fs, giving up",
                (now - rsr2_chain_start_ms_) / 1000.0f);
       rsr2_chain_active_ = false;
       last_op_data_ms_   = millis();  // reset so interval doesn't re-fire immediately
-    } else if ((now - rsr1_retry_ms_) >= RSR1_RETRY_INTERVAL_MS) {
-      rsr1_retry_ms_ = now;
-      ESP_LOGD(TAG, "tx → RSR1 retry (%.1fs since first RSR2)",
+    } else if ((now - rsr2_echo_ms_) >= RSR2_ECHO_INTERVAL_MS) {
+      rsr2_echo_ms_ = now;
+      ESP_LOGD(TAG, "tx → RSR2 echo (%.1fs elapsed)",
                (now - rsr2_chain_start_ms_) / 1000.0f);
-      send_operational_data_request(false);
+      send_operational_data_request(true);
     }
   }
 }
@@ -215,18 +216,16 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit is not yet ready to deliver RSR1 data.  Do NOT echo RSR2 — echoing
-      // keeps the unit stuck in a mirror loop.  The loop() retry timer will
-      // resend RSR1 every RSR1_RETRY_INTERVAL_MS until data arrives.
+      // Unit is not yet ready to deliver RSR1 data.  Protocol requires echoing
+      // RSR2 back; loop() sends rate-limited echoes every RSR2_ECHO_INTERVAL_MS.
       uint32_t now = millis();
       if (!rsr2_chain_active_) {
         rsr2_chain_active_   = true;
         rsr2_chain_start_ms_ = now;
-        rsr1_retry_ms_       = now;
-        ESP_LOGD(TAG, "rx ← RSR2 (unit not ready), will retry RSR1 every %.1fs",
-                 RSR1_RETRY_INTERVAL_MS / 1000.0f);
+        rsr2_echo_ms_        = now - RSR2_ECHO_INTERVAL_MS;  // trigger first echo immediately
+        ESP_LOGD(TAG, "rx ← RSR2 (unit not ready), starting echo handshake");
       } else {
-        ESP_LOGD(TAG, "rx ← RSR2 (%.1fs elapsed), waiting for retry",
+        ESP_LOGD(TAG, "rx ← RSR2 (%.1fs elapsed)",
                  (now - rsr2_chain_start_ms_) / 1000.0f);
       }
     } else if (buf[3] == '1') {

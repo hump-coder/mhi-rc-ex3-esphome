@@ -276,7 +276,7 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
 
   float indoor_air  = static_cast<float>(static_cast<int8_t>(data[idx(POS_INDOOR_AIR_TEMP)]));
   float outdoor_air = static_cast<float>(static_cast<uint8_t>(data[idx(POS_OUTDOOR_AIR_TEMP)]) / 4 - 22);
-  float return_air  = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 4.0f;
+  float return_air  = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 10.0f;
   uint8_t comp_hz   = data[idx(POS_COMPRESSOR_HZ)];
   uint8_t in_fan    = data[idx(POS_INDOOR_FAN_SPEED)];
 

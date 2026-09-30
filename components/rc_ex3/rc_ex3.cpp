@@ -71,6 +71,11 @@ void RcEx3Climate::loop() {
         rx_overflowed_ = false;
         rx_state_ = RxState::READING_PAYLOAD;
       }
+    } else if (c == 0x02) {
+      // STX mid-frame: the previous frame lost its ETX; start over so this one survives.
+      ESP_LOGW(TAG, "rx frame without ETX dropped");
+      rx_len_ = 0;
+      rx_overflowed_ = false;
     } else {
       if (c == 0x03) {
         if (rx_overflowed_) {

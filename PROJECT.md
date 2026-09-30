@@ -56,7 +56,8 @@ Where each `[field]` is a 2-char lowercase hex byte:
 
 **Command replies (measured on a real unit):**
 
-- Normally the unit answers within ~35 ms with an `RSSL11` status (same layout as the status response below) that reports its state from **before** the command was applied. The firmware therefore treats the first RSSL reply after a command as an ack only (logged as `command ack … (not applied)`), keeps HA on the commanded state, and sends a status query 2 s later to read the applied state.
+- Normally the unit answers within ~35–50 ms with an `RSSL11` status (same layout as the status response below) reflecting its state **at reply time**, which usually — but not always — predates the command being applied. The firmware therefore treats the reply to a command as an ack only (logged as `command ack … (not applied)`), keeps HA on the commanded state, and sends a status query 2 s later to read the applied state.
+- A command sent while the unit was still answering a status query (~75 ms after it) was **silently dropped**. The firmware therefore keeps only one request outstanding at a time (see *Request scheduling* below).
 - A command sent **during the op-data handshake** is answered with a fixed `RSSL08FF00401332540100` (identical across different setpoints and prior states; `40 13` plausibly refers to the `13` set command). The command is still applied — the unit reported it as current state afterwards — so this looks like "busy, queued". The confirming status query is deferred until the handshake ends. The remaining bytes (`32 54 01 00`) are not decoded.
 
 ### Status Query
@@ -145,6 +146,12 @@ Each polling cycle (`update_interval`: component default 30 s, the example YAML 
 2. **Operational data query** → only on cycles where `op_data_interval` (minutes, `0` = never) has elapsed since the `update()` that requested the last successful op-data (with 5 s slack, so a 5 min interval with a 5 min `update_interval` runs every cycle despite the ~40 s handshake); fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
 
 This avoids sending both requests simultaneously and overlapping their responses. `current_temperature` in the HA climate card comes from the op-data indoor temperature, so it stays empty if `op_data_interval` is `0`.
+
+### Request scheduling
+
+Only one request (status query, command, op-data request/echo) is outstanding at a time. Each reply completes the in-flight request and is interpreted according to what was sent; an RSSL reply that doesn't match an in-flight status query or command is logged and never applied. A reply is given up on after 500 ms (measured replies: 11–155 ms), and 20 ms is left between a reply and the next request. When the bus is free, pending work goes out in priority order: HA command, op-data echo, status query, op-data start. Status queries (including command confirmations) wait for an op-data handshake to finish; commands are sent mid-handshake, which the unit handles.
+
+HA commands are built from the current state when actually sent, so rapid changes (e.g. clicking the setpoint up several times) coalesce into a single command with the final state.
 
 ### Combined Control Packet
 

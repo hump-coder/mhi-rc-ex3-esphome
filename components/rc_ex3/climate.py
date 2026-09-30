@@ -33,7 +33,7 @@ CONFIG_SCHEMA = (
     .extend(
         {
             cv.Optional(CONF_OP_DATA_INTERVAL, default=0): cv.uint32_t,
-            cv.Optional(CONF_OP_DATA_ECHO_DELAY, default="0ms"): cv.All(
+            cv.Optional(CONF_OP_DATA_ECHO_DELAY, default="500ms"): cv.All(
                 cv.positive_time_period_milliseconds,
                 cv.Range(max=cv.TimePeriod(milliseconds=2000)),
             ),

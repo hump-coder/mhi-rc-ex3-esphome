@@ -90,8 +90,9 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t op_data_reply_max_ms_{0};
 
   // Mode to send alongside power=off so the unit keeps its mode for the next
-  // power-on. Updated from status and from HA while the unit is on.
+  // power-on. Updated from every status reply (on or off) and from HA.
   climate::ClimateMode last_on_mode_{climate::CLIMATE_MODE_HEAT_COOL};
+  bool status_received_{false};  // HA commands are dropped until the first status reply
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

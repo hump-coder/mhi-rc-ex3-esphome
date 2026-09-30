@@ -93,6 +93,14 @@ void RcEx3Climate::loop() {
 // ─── HA control call ─────────────────────────────────────────────────────────
 
 void RcEx3Climate::control(const climate::ClimateCall &call) {
+  // Every command carries the full state (power, mode, fan, setpoint). Until the
+  // first status reply we'd fill the unset fields with defaults and silently
+  // change the unit, so drop the command instead.
+  if (!status_received_) {
+    ESP_LOGW(TAG, "ignoring HA command: unit state not yet read");
+    this->publish_state();  // revert HA to the last known state
+    return;
+  }
   if (call.get_mode().has_value()) {
     this->mode = *call.get_mode();
     if (this->mode != climate::CLIMATE_MODE_OFF)
@@ -248,8 +256,13 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
 
   this->mode               = new_mode;
-  if (is_on)
-    this->last_on_mode_ = new_mode;
+  // The unit reports its mode even while off; remember it so an HA command
+  // sent while off (power=0) doesn't overwrite it with a default.
+  if (mode_c >= '0' && mode_c <= '4')
+    this->last_on_mode_ = wire_to_climate_mode(mode_c - '0');
+  else
+    ESP_LOGW(TAG, "status: unexpected mode '%c'; keeping previous mode", mode_c);
+  this->status_received_ = true;
   const char *custom_fan = wire_to_custom_fan_mode(fan_c);
   if (custom_fan != nullptr)
     this->set_custom_fan_mode_(custom_fan);

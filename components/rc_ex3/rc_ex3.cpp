@@ -209,13 +209,48 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   // waiting for the bus simply picks up this change too.
   if (command_pending_)
     ESP_LOGD(TAG, "HA change merged into the queued command");
+  if (!raw_command_.empty()) {
+    ESP_LOGW(TAG, "HA command replaces queued raw command");
+    raw_command_.clear();
+  }
   command_pending_ = true;
   cmd_retry_left_ = true;
   this->publish_state();
 }
 
+void RcEx3Climate::send_raw_command(const std::string &body) {
+  // Only set commands, as hex field pairs, so a typo can't send another message type.
+  bool ok = body.size() >= 10 && body.size() <= 64 && body.size() % 2 == 0 &&
+            body.compare(0, 6, "RSSL13") == 0;
+  for (size_t i = 6; ok && i < body.size(); i++)
+    ok = isxdigit(static_cast<uint8_t>(body[i]));
+  if (!ok) {
+    ESP_LOGW(TAG, "raw command rejected (want RSSL13 + hex, no checksum): %s", body.c_str());
+    return;
+  }
+  if (!status_received_) {
+    ESP_LOGW(TAG, "raw command rejected: unit state not yet read");
+    return;
+  }
+  if (command_pending_)
+    ESP_LOGW(TAG, "raw command replaces the queued HA command");
+  raw_command_ = body;
+  command_pending_ = true;
+  cmd_retry_left_ = false;  // a resend would rebuild the HA state, not this body
+}
+
 void RcEx3Climate::send_command_() {
-  uint8_t power    = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
+  if (!raw_command_.empty()) {
+    ESP_LOGI(TAG, "tx raw → %s", raw_command_.c_str());
+    send_command(raw_command_.c_str(), raw_command_.size());
+    raw_command_.clear();
+    begin_tx_(TxKind::COMMAND);
+    cmd_sent_ms_ = millis();
+    cmd_confirm_pending_ = true;
+    return;
+  }
+
+  uint8_t power   = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
   // When powering off, keep the unit's mode so the panel resumes it later.
   uint8_t mode     = climate_mode_to_wire(power ? this->mode : this->last_on_mode_);
   uint8_t fan      = custom_fan_mode_to_wire(this->get_custom_fan_mode());
@@ -501,6 +536,7 @@ void RcEx3Climate::send_command(const char *payload, size_t len) {
   uint8_t sum = calc_checksum(payload, len);
   char hex_sum[3];
   snprintf(hex_sum, sizeof(hex_sum), "%02X", sum);
+  ESP_LOGV(TAG, "tx: %.*s%s", (int) len, payload, hex_sum);
 
   this->write_byte(0x02);
   for (size_t i = 0; i < len; i++)
@@ -515,6 +551,7 @@ void RcEx3Climate::send_status_request() {
     ESP_LOGW(TAG, "status poll during op-data handshake (%u ms in, %u retries)",
              (unsigned) (millis() - op_data_started_ms_), (unsigned) rsr2_retries_);
   const char *query = "RSSL12FF0001FF02FF03FF04FF05FF06FF0FFF43FF25";
+  ESP_LOGV(TAG, "tx: %s", query);
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)
     this->write_byte(static_cast<uint8_t>(*p));
@@ -590,6 +627,7 @@ void RcEx3Climate::send_operational_data_request(bool second_page) {
   }
   op_data_last_tx_ms_ = now;
   const char *query = second_page ? "RSR20000E9" : "RSR10000E8";
+  ESP_LOGV(TAG, "tx: %s", query);
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)
     this->write_byte(static_cast<uint8_t>(*p));

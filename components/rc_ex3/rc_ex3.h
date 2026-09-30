@@ -4,6 +4,7 @@
 #include "esphome/components/climate/climate.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/uart/uart.h"
+#include <string>
 
 namespace esphome {
 namespace rc_ex3 {
@@ -61,6 +62,10 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   climate::ClimateTraits traits() override;
 
   float get_setup_priority() const override { return setup_priority::DATA; }
+
+  // Protocol probing: queue a hand-written RSSL13 body (hex, no checksum) as the
+  // next command, e.g. from an api action. Acked and confirmed like an HA command.
+  void send_raw_command(const std::string &body);
 
   void set_op_data_interval(uint32_t minutes) { op_data_interval_minutes_ = minutes; }
   void set_op_data_echo_delay(uint32_t ms) { op_data_echo_delay_ms_ = ms; }
@@ -140,6 +145,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t bus_idle_ms_{0};           // millis() the last request completed
   bool     command_pending_{false};   // HA command waiting for the bus
   bool     status_pending_{false};    // status poll waiting for the bus
+  std::string raw_command_;           // send_raw_command() body; sent instead of the HA state
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

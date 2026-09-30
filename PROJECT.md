@@ -110,7 +110,7 @@ After stripping the 4-char `RSR1` header, the binary blob is decoded. Confirmed 
 | Position | Meaning                          | Decoding                        |
 |----------|----------------------------------|---------------------------------|
 | 9        | Indoor air temperature           | `int8_t` → °C                  |
-| 26       | Outdoor air temperature          | `(uint8_t / 4) - 22` → °C      |
+| 26       | Outdoor air temperature          | `uint8_t / 4.0 - 22` → °C (0.25 °C steps) |
 | 27       | Return air temperature           | `uint8_t / 10` → °C            |
 | 32       | Compressor frequency             | raw uint8_t → Hz                |
 | 44       | Compressor hours (MSB)           | combined with LSB × 100         |
@@ -145,15 +145,15 @@ The `loop()` method accumulates incoming bytes into `rx_buf_[]` using a two-stat
 Each polling cycle (`update_interval`: component default 30 s, the example YAML uses 5 min) does up to two serial transactions:
 
 1. **Status query** → fired immediately in `update()`
-2. **Operational data query** → only on cycles where `op_data_interval` (minutes, `0` = never) has elapsed since the `update()` that requested the last successful op-data (with 5 s slack, so a 5 min interval with a 5 min `update_interval` runs every cycle despite the ~40 s handshake); fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
+2. **Operational data query** → only on cycles where `op_data_interval` (minutes, 0–1440, `0` = never) has elapsed since the `update()` that requested the last successful op-data (with 5 s slack, so a 5 min interval with a 5 min `update_interval` runs every cycle despite the ~40 s handshake); fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
 
 This avoids sending both requests simultaneously and overlapping their responses. `current_temperature` in the HA climate card comes from the op-data indoor temperature, so it stays empty if `op_data_interval` is `0`.
 
 ### Request scheduling
 
-Only one request (status query, command, op-data request/echo) is outstanding at a time. Each reply completes the in-flight request and is interpreted according to what was sent; an RSSL reply that doesn't match an in-flight status query or command is logged and never applied. A reply is given up on after 500 ms (measured replies: 11–155 ms), and 20 ms is left between a reply and the next request. When the bus is free, pending work goes out in priority order: HA command, op-data echo, status query, op-data start. Status queries (including command confirmations) wait for an op-data handshake to finish; commands are sent mid-handshake, which the unit handles. A lost op-data reply mid-handshake is echoed again after the usual delay; the handshake is only abandoned once the unit has sent nothing for 5 s. `update()` doesn't request a new op-data cycle while one is already requested, queued or running.
+Only one request (status query, command, op-data request/echo) is outstanding at a time. Each reply completes the in-flight request and is interpreted according to what was sent; an RSSL reply that doesn't match an in-flight status query or command is logged and never applied. A reply is given up on after 500 ms (measured replies: 11–155 ms), and 20 ms is left between a reply and the next request. An unanswered command or status query is resent once (unless a newer one is already queued); commands carry the full state, so a resend is harmless. The first status query goes out at boot and is repeated every 5 s until a valid reply arrives, since HA commands are dropped until then. When the bus is free, pending work goes out in priority order: HA command, op-data echo, status query, op-data start. Status queries (including command confirmations) wait for an op-data handshake to finish; commands are sent mid-handshake, which the unit handles. A lost op-data reply mid-handshake is echoed again after the usual delay; the handshake is only abandoned once the unit has sent nothing for 5 s. `update()` doesn't request a new op-data cycle while one is already requested, queued or running.
 
-While an HA command is queued or awaiting its confirming status query, status replies are not applied (the command is built from the same fields, and a reply shortly after a command may predate it). Status replies with unexpected power/mode/setpoint bytes are ignored. HA setpoints are rounded to 0.5 °C and clamped to 16–30 °C before being stored and sent.
+While an HA command is queued or awaiting its confirming status query, status replies are not applied (the command is built from the same fields, and a reply shortly after a command may predate it). Status replies with unexpected power/mode/setpoint bytes, or a setpoint outside 10–35 °C (the additive checksum misses swapped characters, e.g. `2C` ↔ `C2`), are ignored, re-polled once, and don't start an op-data cycle. HA setpoints are rounded to 0.5 °C and clamped to 16–30 °C before being stored and sent; the setpoint is clamped again when a command is built.
 
 HA commands are built from the current state when actually sent, so rapid changes (e.g. clicking the setpoint up several times) coalesce into a single command with the final state. In practice changes only coalesce while another request is outstanding (typically ~40–60 ms); HA's thermostat card already debounces clicks (~1 s) before sending.
 

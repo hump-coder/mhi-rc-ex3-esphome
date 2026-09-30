@@ -31,6 +31,10 @@ static const uint32_t CMD_CONFIRM_DELAY_MS    = 2000;
 static const uint32_t TX_REPLY_TIMEOUT_MS     = 500;
 static const uint32_t TX_GAP_MS               = 20;
 
+// Setpoint range accepted by the unit (and advertised to HA).
+static const float TEMP_MIN_C = 16.0f;
+static const float TEMP_MAX_C = 30.0f;
+
 enum class TxKind : uint8_t {
   NONE,
   STATUS,

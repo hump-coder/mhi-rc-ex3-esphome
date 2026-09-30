@@ -1,5 +1,7 @@
 #include "rc_ex3.h"
 #include "esphome/core/log.h"
+#include <algorithm>
+#include <cmath>
 
 namespace esphome {
 namespace rc_ex3 {
@@ -20,8 +22,8 @@ climate::ClimateTraits RcEx3Climate::traits() {
     climate::CLIMATE_MODE_FAN_ONLY,
   });
   traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO});
-  traits.set_visual_min_temperature(16.0f);
-  traits.set_visual_max_temperature(30.0f);
+  traits.set_visual_min_temperature(TEMP_MIN_C);
+  traits.set_visual_max_temperature(TEMP_MAX_C);
   traits.set_visual_temperature_step(0.5f);
   return traits;
 }
@@ -178,8 +180,12 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
     if (this->mode != climate::CLIMATE_MODE_OFF)
       this->last_on_mode_ = this->mode;
   }
-  if (call.get_target_temperature().has_value())
-    this->target_temperature = *call.get_target_temperature();
+  if (call.get_target_temperature().has_value()) {
+    // Store what will actually be sent: 0.5 °C steps within the unit's range.
+    const float t = *call.get_target_temperature();
+    if (std::isfinite(t))
+      this->target_temperature = roundf(std::min(std::max(t, TEMP_MIN_C), TEMP_MAX_C) * 2.0f) / 2.0f;
+  }
   if (call.get_fan_mode().has_value())
     this->set_fan_mode_(*call.get_fan_mode());  // clears any custom speed
   if (call.has_custom_fan_mode())
@@ -198,7 +204,7 @@ void RcEx3Climate::send_command_() {
   // When powering off, keep the unit's mode so the panel resumes it later.
   uint8_t mode     = climate_mode_to_wire(power ? this->mode : this->last_on_mode_);
   uint8_t fan      = custom_fan_mode_to_wire(this->get_custom_fan_mode());
-  uint8_t temp_wire = static_cast<uint8_t>(this->target_temperature * 2.0f);
+  uint8_t temp_wire = static_cast<uint8_t>(lroundf(this->target_temperature * 2.0f));
 
   char buf[64];
   size_t len = snprintf(buf, sizeof(buf),

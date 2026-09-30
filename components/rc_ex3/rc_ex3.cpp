@@ -35,10 +35,12 @@ void RcEx3Climate::setup() {
   this->mode                = climate::CLIMATE_MODE_OFF;
   this->target_temperature  = 22.0f;
   this->current_temperature = NAN;
+  this->status_pending_ = true;  // read the unit's state now, not at the first update()
 }
 
 void RcEx3Climate::update() {
   status_pending_ = true;
+  status_retry_left_ = true;
 
   if (op_data_interval_minutes_ == 0)
     return;
@@ -96,6 +98,10 @@ void RcEx3Climate::loop() {
     }
   }
 
+  if (!status_received_ && !status_pending_ && inflight_ == TxKind::NONE &&
+      millis() - status_sent_ms_ >= STATUS_STARTUP_RETRY_MS)
+    status_pending_ = true;
+
   service_op_data_handshake_();
   service_command_confirm_();
   service_tx_();
@@ -121,6 +127,14 @@ void RcEx3Climate::service_tx_() {
       // (after the usual delay) until the stall detector gives up.
       op_data_rsr2_rx_ms_ = now;
       op_data_echo_scheduled_ = true;
+    } else if (inflight_ == TxKind::COMMAND && cmd_retry_left_ && !command_pending_) {
+      // Commands carry the full state, so resending is harmless. (A newer
+      // queued command covers this one and keeps the retry for itself.)
+      cmd_retry_left_ = false;
+      command_pending_ = true;
+    } else if (inflight_ == TxKind::STATUS && status_retry_left_ && !status_pending_) {
+      status_retry_left_ = false;
+      status_pending_ = true;
     }
     finish_tx_();
   }
@@ -196,6 +210,7 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   if (command_pending_)
     ESP_LOGD(TAG, "HA change merged into the queued command");
   command_pending_ = true;
+  cmd_retry_left_ = true;
   this->publish_state();
 }
 
@@ -204,7 +219,10 @@ void RcEx3Climate::send_command_() {
   // When powering off, keep the unit's mode so the panel resumes it later.
   uint8_t mode     = climate_mode_to_wire(power ? this->mode : this->last_on_mode_);
   uint8_t fan      = custom_fan_mode_to_wire(this->get_custom_fan_mode());
-  uint8_t temp_wire = static_cast<uint8_t>(lroundf(this->target_temperature * 2.0f));
+  const float temp_c = std::isfinite(this->target_temperature)
+                           ? std::min(std::max(this->target_temperature, TEMP_MIN_C), TEMP_MAX_C)
+                           : 22.0f;
+  uint8_t temp_wire = static_cast<uint8_t>(lroundf(temp_c * 2.0f));
 
   char buf[64];
   size_t len = snprintf(buf, sizeof(buf),
@@ -234,6 +252,7 @@ void RcEx3Climate::service_command_confirm_() {
   cmd_confirm_pending_ = false;
   ESP_LOGD(TAG, "confirming command with status poll (%u ms after tx)", (unsigned) (now - cmd_sent_ms_));
   status_pending_ = true;  // sent once the bus is free (and any op-data handshake has ended)
+  status_retry_left_ = true;
 }
 
 // ─── Packet dispatch ─────────────────────────────────────────────────────────
@@ -295,7 +314,15 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
 
   // RSSL1x → climate status; queue op_data only if this update() cycle requested it
   if (is_rssl) {
-    parse_status_response(buf, buflen);
+    if (!parse_status_response(buf, buflen)) {
+      // Corrupt reply: poll again (startup keeps polling until a valid one) and
+      // don't start op-data off it.
+      if (status_retry_left_ && !status_pending_) {
+        status_retry_left_ = false;
+        status_pending_ = true;
+      }
+      return;
+    }
     if (op_data_requested_) {
       op_data_requested_ = false;
       if (op_data_active_)
@@ -367,9 +394,9 @@ bool RcEx3Climate::validate_checksum_and_extract_payload_(const char *raw, size_
 //   [21]   fan    ('0'=spd1,'1'=spd2,'2'=spd3,'6'=spd4,other=auto)
 //   [30-31] temp  (2 hex chars, value * 0.5 = °C)
 
-void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
+bool RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   if (len < 32)
-    return;
+    return false;
 
   char pwr_c  = buf[13];
   char mode_c = buf[17];
@@ -378,12 +405,18 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   if ((pwr_c != '0' && pwr_c != '1') || mode_c < '0' || mode_c > '4' ||
       !isxdigit(static_cast<uint8_t>(buf[30])) || !isxdigit(static_cast<uint8_t>(buf[31]))) {
     ESP_LOGW(TAG, "status: unexpected field values, ignoring: %s", buf);
-    return;
+    return false;
   }
 
   char tmp[3] = {buf[30], buf[31], '\0'};
   unsigned int raw_temp = static_cast<unsigned int>(strtol(tmp, nullptr, 16));
   float temp_c = raw_temp * 0.5f;
+  // The additive checksum misses swapped characters (2C ↔ C2 = 22 ↔ 97 °C), so
+  // reject implausible setpoints rather than store and later resend them.
+  if (temp_c < TEMP_MIN_C - 6.0f || temp_c > TEMP_MAX_C + 5.0f) {
+    ESP_LOGW(TAG, "status: implausible setpoint %.1f°C, ignoring: %s", temp_c, buf);
+    return false;
+  }
 
   ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
   this->status_received_ = true;
@@ -393,7 +426,7 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   // change. The confirming poll is sent after cmd_confirm_pending_ clears.
   if (command_pending_ || cmd_confirm_pending_) {
     ESP_LOGD(TAG, "status not applied: HA command awaiting confirmation");
-    return;
+    return true;
   }
 
   this->mode = (pwr_c == '1') ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
@@ -411,6 +444,7 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
     this->current_temperature = indoor_temperature_sensor_->state;
   }
   this->publish_state();
+  return true;
 }
 
 // ─── Operational data parser ──────────────────────────────────────────────────
@@ -432,7 +466,7 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   auto idx = [](uint8_t pos) { return pos - HEADER_LEN; };
 
   float indoor_air  = static_cast<float>(static_cast<int8_t>(data[idx(POS_INDOOR_AIR_TEMP)]));
-  float outdoor_air = static_cast<float>(static_cast<uint8_t>(data[idx(POS_OUTDOOR_AIR_TEMP)]) / 4 - 22);
+  float outdoor_air = data[idx(POS_OUTDOOR_AIR_TEMP)] / 4.0f - 22.0f;
   float return_air  = static_cast<float>(data[idx(POS_RETURN_AIR_TEMP)]) / 10.0f;
   uint8_t comp_hz   = data[idx(POS_COMPRESSOR_HZ)];
   uint8_t in_fan    = data[idx(POS_INDOOR_FAN_SPEED)];
@@ -486,6 +520,7 @@ void RcEx3Climate::send_status_request() {
     this->write_byte(static_cast<uint8_t>(*p));
   this->write_byte(0x03);
   begin_tx_(TxKind::STATUS);
+  status_sent_ms_ = millis();
 }
 
 // ─── Op-data handshake ───────────────────────────────────────────────────────

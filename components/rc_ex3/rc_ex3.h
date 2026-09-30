@@ -24,6 +24,9 @@ static const uint32_t OP_DATA_INTERVAL_SLACK_MS = 5000;
 
 // Poll status this long after an HA command to read the applied state.
 static const uint32_t CMD_CONFIRM_DELAY_MS    = 2000;
+// Until the first status reply arrives (HA commands are dropped meanwhile),
+// poll this often instead of waiting for the next update().
+static const uint32_t STATUS_STARTUP_RETRY_MS = 5000;
 
 // One request outstanding at a time: give up waiting for a reply after
 // TX_REPLY_TIMEOUT_MS (replies measured at 11-155 ms), and leave TX_GAP_MS
@@ -80,7 +83,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
   void parse_packet(const char *raw, size_t len);
   bool validate_checksum_and_extract_payload_(const char *raw, size_t len, char *payload, size_t payload_size, size_t &payload_len);
-  void parse_status_response(const char *buf, size_t len);
+  bool parse_status_response(const char *buf, size_t len);  // false if the reply is invalid
   void parse_operational_data(const char *buf, size_t len);
   void handle_op_data_not_ready_(const char *buf);
   void service_op_data_handshake_();
@@ -126,6 +129,9 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool status_received_{false};  // HA commands are dropped until the first status reply
 
   uint32_t cmd_sent_ms_{0};           // millis() of the latest HA command
+  bool     cmd_retry_left_{false};    // resend the command once if it gets no ack
+  bool     status_retry_left_{false}; // re-poll once if a status poll gets no reply
+  uint32_t status_sent_ms_{0};        // millis() of the latest status poll
   bool     cmd_confirm_pending_{false};  // status poll due CMD_CONFIRM_DELAY_MS after it
 
   // Request scheduling (see service_tx_()).

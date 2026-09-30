@@ -69,6 +69,10 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
   bool rx_overflowed_{false};
 
+  // Mode to send alongside power=off so the unit keeps its mode for the next
+  // power-on. Updated from status and from HA while the unit is on.
+  climate::ClimateMode last_on_mode_{climate::CLIMATE_MODE_HEAT_COOL};
+
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};
   sensor::Sensor *return_air_temperature_sensor_{nullptr};

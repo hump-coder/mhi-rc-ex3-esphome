@@ -91,8 +91,11 @@ void RcEx3Climate::loop() {
 // ─── HA control call ─────────────────────────────────────────────────────────
 
 void RcEx3Climate::control(const climate::ClimateCall &call) {
-  if (call.get_mode().has_value())
+  if (call.get_mode().has_value()) {
     this->mode = *call.get_mode();
+    if (this->mode != climate::CLIMATE_MODE_OFF)
+      this->last_on_mode_ = this->mode;
+  }
   if (call.get_target_temperature().has_value())
     this->target_temperature = *call.get_target_temperature();
   if (call.get_fan_mode().has_value())
@@ -101,7 +104,8 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
     this->set_custom_fan_mode_(call.get_custom_fan_mode());
 
   uint8_t power    = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
-  uint8_t mode     = climate_mode_to_wire(this->mode);
+  // When powering off, keep the unit's mode so the panel resumes it later.
+  uint8_t mode     = climate_mode_to_wire(power ? this->mode : this->last_on_mode_);
   uint8_t fan      = custom_fan_mode_to_wire(this->get_custom_fan_mode());
   uint8_t temp_wire = static_cast<uint8_t>(this->target_temperature * 2.0f);
 
@@ -229,6 +233,8 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
 
   this->mode               = new_mode;
+  if (is_on)
+    this->last_on_mode_ = new_mode;
   const char *custom_fan = wire_to_custom_fan_mode(fan_c);
   if (custom_fan != nullptr)
     this->set_custom_fan_mode_(custom_fan);

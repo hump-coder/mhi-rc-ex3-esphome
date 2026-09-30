@@ -76,6 +76,7 @@ climate:
     uart_id: rc_ex3_uart
     update_interval: 5min   # status poll cadence
     op_data_interval: 5    # 0 = disable diagnostic sensor requests (prevents "communicating with PC" mode)
+    # op_data_echo_delay: 250ms   # pause before each "not ready" echo during op-data (default 0 = immediate)
 
     # ── Diagnostic sensors (all optional – remove any you don't need) ─────────
     indoor_temperature:

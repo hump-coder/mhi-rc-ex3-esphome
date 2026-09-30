@@ -86,6 +86,8 @@ void RcEx3Climate::loop() {
     op_data_pending_ = false;
     send_operational_data_request(false);
   }
+
+  service_op_data_handshake_();
 }
 
 // ─── HA control call ─────────────────────────────────────────────────────────
@@ -116,6 +118,9 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
 
   ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C)",
            power, mode, fan, temp_wire, this->target_temperature);
+  if (op_data_active_)
+    ESP_LOGW(TAG, "tx command during op-data handshake (%u ms in, %u retries)",
+             (unsigned) (millis() - op_data_started_ms_), (unsigned) rsr2_retries_);
 
   send_command(buf, len);
   this->publish_state();
@@ -156,7 +161,11 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
     parse_status_response(buf, buflen);
     if (op_data_requested_) {
       op_data_requested_ = false;
-      op_data_pending_   = true;
+      if (op_data_active_)
+        ESP_LOGW(TAG, "op-data due but previous handshake still active (%u ms in); skipping",
+                 (unsigned) (millis() - op_data_started_ms_));
+      else
+        op_data_pending_ = true;
     }
     return;
   }
@@ -164,15 +173,15 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit not yet ready; echo RSR2 immediately and it will eventually respond RSR1.
-      // Deliberately unbounded: the unit can take well over 15 s (700+ echoes)
-      // to become ready, and abandoning the handshake part-way appeared to
-      // leave the panel ignoring commands.
-      rsr2_retries_++;
-      send_operational_data_request(true);
+      handle_op_data_not_ready_(buf);
     } else if (buf[3] == '1') {
-      ESP_LOGD(TAG, "op-data ready after %u RSR2 retries (%u ms)", (unsigned) rsr2_retries_,
-               (unsigned) (millis() - op_data_started_ms_));
+      const uint32_t now = millis();
+      ESP_LOGD(TAG, "op-data ready after %u RSR2 retries (%u ms); reply latency %u-%u ms, echo delay %u ms",
+               (unsigned) rsr2_retries_, (unsigned) (now - op_data_started_ms_),
+               (unsigned) op_data_reply_min_ms_, (unsigned) op_data_reply_max_ms_,
+               (unsigned) op_data_echo_delay_ms_);
+      op_data_active_ = false;
+      op_data_echo_scheduled_ = false;
       parse_operational_data(buf, buflen);
     }
     return;
@@ -317,6 +326,9 @@ void RcEx3Climate::send_command(const char *payload, size_t len) {
 }
 
 void RcEx3Climate::send_status_request() {
+  if (op_data_active_)
+    ESP_LOGW(TAG, "status poll during op-data handshake (%u ms in, %u retries)",
+             (unsigned) (millis() - op_data_started_ms_), (unsigned) rsr2_retries_);
   const char *query = "RSSL12FF0001FF02FF03FF04FF05FF06FF0FFF43FF25";
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)
@@ -324,11 +336,77 @@ void RcEx3Climate::send_status_request() {
   this->write_byte(0x03);
 }
 
-void RcEx3Climate::send_operational_data_request(bool second_page) {
-  if (!second_page) {
-    op_data_started_ms_ = millis();
-    rsr2_retries_ = 0;
+// ─── Op-data handshake ───────────────────────────────────────────────────────
+//
+// RSR2 means "not ready": echo RSR20000E9 and the unit eventually answers RSR1.
+// Deliberately unbounded: the unit can take ~40 s (1800+ immediate echoes) to
+// become ready, and abandoning the handshake part-way appeared to leave the
+// panel ignoring commands. op_data_echo_delay only paces the echoes.
+
+void RcEx3Climate::handle_op_data_not_ready_(const char *buf) {
+  const uint32_t now = millis();
+  const uint32_t latency = now - op_data_last_tx_ms_;
+  if (!op_data_active_) {
+    // Late reply after the stall detector gave up: resume rather than leave the
+    // unit mid-handshake.
+    ESP_LOGW(TAG, "op-data not ready reply after handshake ended (%u ms since last request); resuming",
+             (unsigned) latency);
+    op_data_active_ = true;
   }
+  if (rsr2_retries_ == 0) {
+    ESP_LOGD(TAG, "op-data not ready (first reply after %u ms): %s", (unsigned) latency, buf);
+    op_data_reply_min_ms_ = op_data_reply_max_ms_ = latency;
+  } else {
+    if (latency < op_data_reply_min_ms_) op_data_reply_min_ms_ = latency;
+    if (latency > op_data_reply_max_ms_) op_data_reply_max_ms_ = latency;
+  }
+  rsr2_retries_++;
+  op_data_rsr2_rx_ms_ = now;
+
+  if (op_data_echo_delay_ms_ == 0)
+    send_operational_data_request(true);
+  else
+    op_data_echo_scheduled_ = true;  // sent from loop() once the delay elapses
+}
+
+void RcEx3Climate::service_op_data_handshake_() {
+  if (!op_data_active_)
+    return;
+  const uint32_t now = millis();
+
+  if (op_data_echo_scheduled_) {
+    if (now - op_data_rsr2_rx_ms_ >= op_data_echo_delay_ms_) {
+      op_data_echo_scheduled_ = false;
+      send_operational_data_request(true);
+    }
+    return;
+  }
+
+  if (now - op_data_last_progress_ms_ >= OP_DATA_PROGRESS_LOG_MS) {
+    op_data_last_progress_ms_ = now;
+    ESP_LOGD(TAG, "op-data still not ready: %u retries, %u ms", (unsigned) rsr2_retries_,
+             (unsigned) (now - op_data_started_ms_));
+  }
+
+  // The unit stopped answering: stop waiting (nothing further is sent).
+  if (now - op_data_last_tx_ms_ >= OP_DATA_STALL_MS) {
+    ESP_LOGW(TAG, "op-data handshake stalled: no reply %u ms after last request (%u retries, %u ms in)",
+             (unsigned) (now - op_data_last_tx_ms_), (unsigned) rsr2_retries_,
+             (unsigned) (now - op_data_started_ms_));
+    op_data_active_ = false;
+  }
+}
+
+void RcEx3Climate::send_operational_data_request(bool second_page) {
+  const uint32_t now = millis();
+  if (!second_page) {
+    op_data_started_ms_ = now;
+    op_data_last_progress_ms_ = now;
+    rsr2_retries_ = 0;
+    op_data_active_ = true;
+    op_data_echo_scheduled_ = false;
+  }
+  op_data_last_tx_ms_ = now;
   const char *query = second_page ? "RSR20000E9" : "RSR10000E8";
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)

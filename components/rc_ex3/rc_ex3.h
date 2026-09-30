@@ -15,9 +15,10 @@ static const uint8_t POS_RETURN_AIR_TEMP  = 27;
 static const uint8_t POS_COMPRESSOR_HZ    = 32;
 static const uint8_t POS_INDOOR_FAN_SPEED = 45;
 
-// Consecutive RSR2 ("not ready") replies to echo before giving up on op-data
-// for this poll cycle, so an unresponsive unit can't keep the bus busy.
-static const uint8_t MAX_RSR2_RETRIES     = 5;
+// How long to keep echoing RSR2 ("not ready") replies after a page-1 op-data
+// request before giving up for this poll cycle, so an unresponsive unit can't
+// keep the bus busy.
+static const uint32_t RSR2_TIMEOUT_MS     = 15000;
 
 enum class RxState : uint8_t {
   WAITING_FOR_SOF,
@@ -72,7 +73,8 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool op_data_pending_{false};
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
   bool rx_overflowed_{false};
-  uint8_t rsr2_retries_{0};
+  uint32_t op_data_started_ms_{0};  // millis() of the last page-1 op-data request
+  uint32_t rsr2_retries_{0};        // RSR2 echoes this cycle (for logging only)
 
   // Mode to send alongside power=off so the unit keeps its mode for the next
   // power-on. Updated from status and from HA while the unit is on.

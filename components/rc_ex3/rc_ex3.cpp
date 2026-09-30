@@ -165,15 +165,18 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
       // Unit not yet ready; echo RSR2 and it will eventually respond RSR1.
-      // Bounded so a unit that never becomes ready can't hold the bus.
-      if (rsr2_retries_ >= MAX_RSR2_RETRIES) {
-        ESP_LOGW(TAG, "op-data not ready after %d retries; giving up this cycle", rsr2_retries_);
+      // Time-bounded (not count-bounded: echoes go out back-to-back, and the
+      // unit can need many round-trips) so a unit that never becomes ready
+      // can't hold the bus.
+      if (millis() - op_data_started_ms_ >= RSR2_TIMEOUT_MS) {
+        ESP_LOGW(TAG, "op-data not ready after %u ms (%u retries); giving up this cycle",
+                 (unsigned) RSR2_TIMEOUT_MS, (unsigned) rsr2_retries_);
         return;
       }
       rsr2_retries_++;
       send_operational_data_request(true);
     } else if (buf[3] == '1') {
-      rsr2_retries_ = 0;
+      ESP_LOGD(TAG, "op-data ready after %u RSR2 retries", (unsigned) rsr2_retries_);
       parse_operational_data(buf, buflen);
     }
     return;
@@ -326,8 +329,10 @@ void RcEx3Climate::send_status_request() {
 }
 
 void RcEx3Climate::send_operational_data_request(bool second_page) {
-  if (!second_page)
+  if (!second_page) {
+    op_data_started_ms_ = millis();
     rsr2_retries_ = 0;
+  }
   const char *query = second_page ? "RSR20000E9" : "RSR10000E8";
   this->write_byte(0x02);
   for (const char *p = query; *p; p++)

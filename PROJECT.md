@@ -58,7 +58,9 @@ Where each `[field]` is a 2-char lowercase hex byte:
 
 - Normally the unit answers within ~35–50 ms with an `RSSL11` status (same layout as the status response below) reflecting its state **at reply time**, which usually — but not always — predates the command being applied. The firmware therefore treats the reply to a command as an ack only (logged as `command ack … (not applied)`), keeps HA on the commanded state, and sends a status query 2 s later to read the applied state.
 - A command sent while the unit was still answering a status query (~75 ms after it) was **silently dropped**. The firmware therefore keeps only one request outstanding at a time (see *Request scheduling* below).
-- A command sent **during the op-data handshake** is answered with a fixed `RSSL08FF00401332540100` (identical across different setpoints and prior states; `40 13` plausibly refers to the `13` set command). The command is still applied — the unit reported it as current state afterwards — so this looks like "busy, queued". The confirming status query is deferred until the handshake ends. The remaining bytes (`32 54 01 00`) are not decoded.
+- Occasionally a command is answered with a fixed `RSSL08FF00401332540100` (identical across different setpoints and prior states; `40 13` plausibly refers to the `13` set command). The command is still applied. It was first seen mid-handshake at 250 ms echo pacing, but later tests at 500 ms got normal `RSSL11` replies mid-handshake and one `RSSL08` ~6 s *after* op-data completed, so the trigger is unknown. The firmware treats it as an ack like any other reply. The remaining bytes (`32 54 01 00`) are not decoded.
+- A command sent during the op-data handshake is acked normally; its confirming status query is deferred until the handshake ends.
+- Three setpoint commands 300 ms apart were each acked (~40 ms) and applied without loss; only the last one's confirming status query ran.
 
 ### Status Query
 
@@ -151,7 +153,7 @@ This avoids sending both requests simultaneously and overlapping their responses
 
 Only one request (status query, command, op-data request/echo) is outstanding at a time. Each reply completes the in-flight request and is interpreted according to what was sent; an RSSL reply that doesn't match an in-flight status query or command is logged and never applied. A reply is given up on after 500 ms (measured replies: 11–155 ms), and 20 ms is left between a reply and the next request. When the bus is free, pending work goes out in priority order: HA command, op-data echo, status query, op-data start. Status queries (including command confirmations) wait for an op-data handshake to finish; commands are sent mid-handshake, which the unit handles.
 
-HA commands are built from the current state when actually sent, so rapid changes (e.g. clicking the setpoint up several times) coalesce into a single command with the final state.
+HA commands are built from the current state when actually sent, so rapid changes (e.g. clicking the setpoint up several times) coalesce into a single command with the final state. In practice changes only coalesce while another request is outstanding (typically ~40–60 ms); HA's thermostat card already debounces clicks (~1 s) before sending.
 
 ### Combined Control Packet
 

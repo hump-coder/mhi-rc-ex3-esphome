@@ -19,6 +19,8 @@ static const uint8_t POS_INDOOR_FAN_SPEED = 45;
 // treat this long without any reply to our last request as a stalled handshake.
 static const uint32_t OP_DATA_PROGRESS_LOG_MS = 10000;
 static const uint32_t OP_DATA_STALL_MS        = 5000;
+// Tolerance when checking whether op_data_interval has elapsed at update().
+static const uint32_t OP_DATA_INTERVAL_SLACK_MS = 5000;
 
 // After an HA command: stop expecting its ack after CMD_ACK_TIMEOUT_MS, and
 // poll status CMD_CONFIRM_DELAY_MS after sending to read the applied state.
@@ -78,7 +80,9 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   RxState rx_state_{RxState::WAITING_FOR_SOF};
 
   uint32_t op_data_interval_minutes_{0};
-  uint32_t last_op_data_ms_{0};
+  uint32_t last_op_data_ms_{0};     // op_data_cycle_ms_ of the last successful op-data
+  uint32_t op_data_cycle_ms_{0};    // millis() of the update() that requested op-data
+  bool op_data_ever_received_{false};
   bool op_data_pending_{false};
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
   bool rx_overflowed_{false};

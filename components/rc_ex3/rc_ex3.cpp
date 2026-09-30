@@ -42,10 +42,16 @@ void RcEx3Climate::update() {
   if (op_data_interval_minutes_ == 0)
     return;
 
+  // Measured from the update() that requested the last successful op-data,
+  // with slack for scheduler jitter, so op_data_interval: 5 with a 5 min
+  // update_interval really runs every cycle (the ~40 s handshake no longer
+  // pushes it to every other cycle).
   const uint32_t now = millis();
-  const uint32_t interval_ms = op_data_interval_minutes_ * 60000UL;
-  if (last_op_data_ms_ == 0 || (now - last_op_data_ms_) >= interval_ms)
+  const uint32_t interval_ms = op_data_interval_minutes_ * 60000UL;  // >= 60 s > slack
+  if (!op_data_ever_received_ || (now - last_op_data_ms_) >= interval_ms - OP_DATA_INTERVAL_SLACK_MS) {
     op_data_requested_ = true;
+    op_data_cycle_ms_ = now;
+  }
 }
 
 // ─── Serial RX loop ──────────────────────────────────────────────────────────
@@ -350,7 +356,8 @@ void RcEx3Climate::parse_operational_data(const char *buf, size_t len) {
   if (compressor_frequency_sensor_)   compressor_frequency_sensor_->publish_state(comp_hz);
   if (indoor_fan_speed_sensor_)       indoor_fan_speed_sensor_->publish_state(in_fan);
 
-  last_op_data_ms_ = millis();
+  last_op_data_ms_ = op_data_cycle_ms_;
+  op_data_ever_received_ = true;
   this->current_temperature = indoor_air;
   this->publish_state();
 }

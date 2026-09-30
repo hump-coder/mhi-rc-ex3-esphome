@@ -261,8 +261,8 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
       return;  // can't tell which state it reflects; never apply it
   }
 
-  // Reply to a command: an ack only (RSSL11 state at reply time, or RSSL08
-  // when the unit is busy with op-data), never applied.
+  // Reply to a command: an ack only (RSSL11 state at reply time, or
+  // occasionally RSSL08), never applied.
   if (is_rssl && was == TxKind::COMMAND) {
     ESP_LOGD(TAG, "command ack after %u ms (not applied): %s", (unsigned) (millis() - cmd_sent_ms_), buf);
     return;
@@ -355,23 +355,31 @@ void RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   char mode_c = buf[17];
   char fan_c  = buf[21];
 
+  if ((pwr_c != '0' && pwr_c != '1') || mode_c < '0' || mode_c > '4' ||
+      !isxdigit(static_cast<uint8_t>(buf[30])) || !isxdigit(static_cast<uint8_t>(buf[31]))) {
+    ESP_LOGW(TAG, "status: unexpected field values, ignoring: %s", buf);
+    return;
+  }
+
   char tmp[3] = {buf[30], buf[31], '\0'};
   unsigned int raw_temp = static_cast<unsigned int>(strtol(tmp, nullptr, 16));
   float temp_c = raw_temp * 0.5f;
 
-  bool is_on = (pwr_c == '1');
-  climate::ClimateMode new_mode = is_on ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
-
   ESP_LOGD(TAG, "status: power=%c mode=%c fan=%c temp=%.1f°C", pwr_c, mode_c, fan_c, temp_c);
+  this->status_received_ = true;
 
-  this->mode               = new_mode;
+  // Commands are built from these fields when sent, and a reply soon after a
+  // command may predate it: don't let it overwrite a queued or unconfirmed HA
+  // change. The confirming poll is sent after cmd_confirm_pending_ clears.
+  if (command_pending_ || cmd_confirm_pending_) {
+    ESP_LOGD(TAG, "status not applied: HA command awaiting confirmation");
+    return;
+  }
+
+  this->mode = (pwr_c == '1') ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
   // The unit reports its mode even while off; remember it so an HA command
   // sent while off (power=0) doesn't overwrite it with a default.
-  if (mode_c >= '0' && mode_c <= '4')
-    this->last_on_mode_ = wire_to_climate_mode(mode_c - '0');
-  else
-    ESP_LOGW(TAG, "status: unexpected mode '%c'; keeping previous mode", mode_c);
-  this->status_received_ = true;
+  this->last_on_mode_ = wire_to_climate_mode(mode_c - '0');
   const char *custom_fan = wire_to_custom_fan_mode(fan_c);
   if (custom_fan != nullptr)
     this->set_custom_fan_mode_(custom_fan);

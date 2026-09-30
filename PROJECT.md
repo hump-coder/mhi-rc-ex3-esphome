@@ -54,12 +54,27 @@ Where each `[field]` is a 2-char lowercase hex byte:
 | `fan`  | `00`=spd1, `01`=spd2, `02`=spd3, `06`=spd4, `07`=auto |
 | `temp` | `actual_°C × 2` as hex (e.g. 22°C → `0x2C`)  |
 
+**Command replies (measured on a real unit):**
+
+- Normally the unit answers within ~35 ms with an `RSSL11` status (same layout as the status response below) that reports its state from **before** the command was applied. The firmware therefore treats the first RSSL reply after a command as an ack only (logged as `command ack … (not applied)`), keeps HA on the commanded state, and sends a status query 2 s later to read the applied state.
+- A command sent **during the op-data handshake** is answered with a fixed `RSSL08FF00401332540100` (identical across different setpoints and prior states; `40 13` plausibly refers to the `13` set command). The command is still applied — the unit reported it as current state afterwards — so this looks like "busy, queued". The confirming status query is deferred until the handshake ends. The remaining bytes (`32 54 01 00`) are not decoded.
+
 ### Status Query
 
 A fixed packet with a pre-calculated embedded checksum (0x25):
 ```
 0x02  RSSL12FF0001FF02FF03FF04FF05FF06FF0FFF43FF25  0x03
 ```
+
+RSSL messages are `RSSL` + a 2-char type + `FF00` + a sequence of `<field id><value>` pairs (types seen: `12` status query, `13` set, `11` status/command reply, `08` see above). A reply laid out by field:
+
+```
+RSSL 11 FF00  01 10  02 12  03 11  04 11  05 13 31  06 11  0F 10
+              power  mode   fan    ?      setpoint  ?      ?
+              off    cool   spd2          0x31 → 24.5 °C
+```
+
+Most values are `1` + the actual value; the setpoint field `05` is `13` + temperature × 2. The mode is reported even while the unit is off, and the firmware remembers it so commands sent while off keep it.
 
 Response (filtered ASCII, positions 0-indexed from first `R`):
 
@@ -77,7 +92,14 @@ Requests a binary diagnostic data blob from the unit:
 0x02  RSR10000E8  0x03
 ```
 
-If the unit responds with `RSR2...`, a follow-up `RSR20000E9` is required. Keep echoing until `RSR1` arrives — do not cap it: measured on a real unit, it took ~39 s (1872 immediate echoes) to become ready, and abandoning the handshake part-way appeared to leave the panel ignoring commands. `op_data_echo_delay` (0–2000 ms, default 0 = echo immediately) paces the echoes; the handshake logs its retry count, duration and reply latency, and stops waiting (sending nothing) if the unit goes silent for 5 s.  
+If the unit responds with `RSR2...` (the payload is just `RSR20000`, with no progress indication), a follow-up `RSR20000E9` is required. Keep echoing until `RSR1` arrives — do not cap it. Measured on a real unit, the unit takes a **fixed ~38–40 s** to become ready regardless of echo rate, on every cycle (not just after boot):
+
+| Echo delay | Echoes | Duration |
+|------------|--------|----------|
+| 0 ms       | 1791–1872 | 37.5–39.2 s |
+| 250 ms     | 132–141 | 37.2–39.7 s |
+
+The unit answers each echo in ~11–90 ms. Capping the handshake (5 retries, then 15 s) meant `RSR1` was never reached, and abandoning it part-way appeared to leave the panel ignoring commands. `op_data_echo_delay` (0–2000 ms, default 500 ms, matching the upstream project's `delay(500)`) paces the echoes; the handshake logs its retry count, duration and reply latency, and stops waiting (sending nothing) if the unit goes silent for 5 s. HA commands sent during the handshake still work (see command replies above).  
 If the unit responds with `RSR1...`, the rest is hex-encoded binary data.
 
 After stripping the 4-char `RSR1` header, the binary blob is decoded. Confirmed byte positions (from upstream reverse engineering):
@@ -120,7 +142,7 @@ The `loop()` method accumulates incoming bytes into `rx_buf_[]` using a two-stat
 Each polling cycle (`update_interval`: component default 30 s, the example YAML uses 5 min) does up to two serial transactions:
 
 1. **Status query** → fired immediately in `update()`
-2. **Operational data query** → only on cycles where `op_data_interval` (minutes, `0` = never) has elapsed; fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
+2. **Operational data query** → only on cycles where `op_data_interval` (minutes, `0` = never) has elapsed since the `update()` that requested the last successful op-data (with 5 s slack, so a 5 min interval with a 5 min `update_interval` runs every cycle despite the ~40 s handshake); fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
 
 This avoids sending both requests simultaneously and overlapping their responses. `current_temperature` in the HA climate card comes from the op-data indoor temperature, so it stays empty if `op_data_interval` is `0`.
 

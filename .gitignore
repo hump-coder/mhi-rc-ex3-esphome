@@ -1,6 +1,7 @@
 # ESPHome
 secrets.yaml
 .esphome/
+__pycache__/
 
 # Prerequisites
 *.d

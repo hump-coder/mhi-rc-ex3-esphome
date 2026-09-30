@@ -20,6 +20,11 @@ static const uint8_t POS_INDOOR_FAN_SPEED = 45;
 static const uint32_t OP_DATA_PROGRESS_LOG_MS = 10000;
 static const uint32_t OP_DATA_STALL_MS        = 5000;
 
+// After an HA command: stop expecting its ack after CMD_ACK_TIMEOUT_MS, and
+// poll status CMD_CONFIRM_DELAY_MS after sending to read the applied state.
+static const uint32_t CMD_ACK_TIMEOUT_MS      = 1000;
+static const uint32_t CMD_CONFIRM_DELAY_MS    = 2000;
+
 enum class RxState : uint8_t {
   WAITING_FOR_SOF,
   READING_PAYLOAD,
@@ -57,6 +62,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   void parse_operational_data(const char *buf, size_t len);
   void handle_op_data_not_ready_(const char *buf);
   void service_op_data_handshake_();
+  void service_command_confirm_();
 
   uint8_t calc_checksum(const char *data, size_t len);
   size_t  hex_to_bytes(const char *hex, uint8_t *out, size_t max_out);
@@ -93,6 +99,10 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   // power-on. Updated from every status reply (on or off) and from HA.
   climate::ClimateMode last_on_mode_{climate::CLIMATE_MODE_HEAT_COOL};
   bool status_received_{false};  // HA commands are dropped until the first status reply
+
+  uint32_t cmd_sent_ms_{0};           // millis() of the latest HA command
+  bool     cmd_ack_pending_{false};   // next RSSL reply is that command's ack
+  bool     cmd_confirm_pending_{false};  // status poll due CMD_CONFIRM_DELAY_MS after it
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

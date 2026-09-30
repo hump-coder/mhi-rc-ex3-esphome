@@ -88,6 +88,7 @@ void RcEx3Climate::loop() {
   }
 
   service_op_data_handshake_();
+  service_command_confirm_();
 }
 
 // ─── HA control call ─────────────────────────────────────────────────────────
@@ -131,7 +132,29 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
              (unsigned) (millis() - op_data_started_ms_), (unsigned) rsr2_retries_);
 
   send_command(buf, len);
+  // The unit's reply to a command reports its state from before the command
+  // was applied, so treat that reply as an ack only and confirm with a fresh
+  // status poll shortly afterwards. HA keeps the commanded state meanwhile.
+  cmd_sent_ms_ = millis();
+  cmd_ack_pending_ = true;
+  cmd_confirm_pending_ = true;
   this->publish_state();
+}
+
+void RcEx3Climate::service_command_confirm_() {
+  const uint32_t now = millis();
+  if (cmd_ack_pending_ && now - cmd_sent_ms_ >= CMD_ACK_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "no reply to command within %u ms", (unsigned) CMD_ACK_TIMEOUT_MS);
+    cmd_ack_pending_ = false;
+  }
+  if (!cmd_confirm_pending_ || now - cmd_sent_ms_ < CMD_CONFIRM_DELAY_MS)
+    return;
+  // Don't interleave a status poll with the op-data handshake; confirm once it ends.
+  if (op_data_active_)
+    return;
+  cmd_confirm_pending_ = false;
+  ESP_LOGD(TAG, "confirming command with status poll (%u ms after tx)", (unsigned) (now - cmd_sent_ms_));
+  send_status_request();
 }
 
 // ─── Packet dispatch ─────────────────────────────────────────────────────────
@@ -164,8 +187,24 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
 
   ESP_LOGV(TAG, "rx: %s", buf);
 
+  const bool is_rssl = buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L';
+
+  // First RSSL reply after a command is its ack; RSSL1 acks carry the unit's
+  // pre-command state, so don't apply them.
+  if (is_rssl && cmd_ack_pending_) {
+    cmd_ack_pending_ = false;
+    ESP_LOGD(TAG, "command ack after %u ms (not applied): %s", (unsigned) (millis() - cmd_sent_ms_), buf);
+    return;
+  }
+
+  // RSSL0x → short reply of unknown meaning (seen once, to a command sent mid-op-data)
+  if (is_rssl && buf[4] == '0') {
+    ESP_LOGD(TAG, "rx RSSL0 reply: %s", buf);
+    return;
+  }
+
   // RSSL1x → climate status; queue op_data only if this update() cycle requested it
-  if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L' && buf[4] == '1') {
+  if (is_rssl && buf[4] == '1') {
     parse_status_response(buf, buflen);
     if (op_data_requested_) {
       op_data_requested_ = false;

@@ -50,7 +50,7 @@ Where each `[field]` is a 2-char lowercase hex byte:
 | Field  | Values                                        |
 |--------|-----------------------------------------------|
 | `pwr`  | `00`=off, `01`=on                             |
-| `mode` | `00`=auto, `01`=dry, `02`=cool, `03`=fan, `04`=heat |
+| `mode` | `00`=auto, `01`=dry, `02`=cool, `03`=fan, `04`=heat (when `pwr`=`00`, the last on-mode is sent so the unit resumes it) |
 | `fan`  | `00`=spd1, `01`=spd2, `02`=spd3, `06`=spd4, `07`=auto |
 | `temp` | `actual_°C × 2` as hex (e.g. 22°C → `0x2C`)  |
 
@@ -77,7 +77,7 @@ Requests a binary diagnostic data blob from the unit:
 0x02  RSR10000E8  0x03
 ```
 
-If the unit responds with `RSR2...`, a follow-up `RSR20000E9` is required.  
+If the unit responds with `RSR2...`, a follow-up `RSR20000E9` is required (at most `MAX_RSR2_RETRIES` = 5 per cycle, so a unit that stays not-ready can't hold the bus).  
 If the unit responds with `RSR1...`, the rest is hex-encoded binary data.
 
 After stripping the 4-char `RSR1` header, the binary blob is decoded. Confirmed byte positions (from upstream reverse engineering):
@@ -86,7 +86,7 @@ After stripping the 4-char `RSR1` header, the binary blob is decoded. Confirmed 
 |----------|----------------------------------|---------------------------------|
 | 9        | Indoor air temperature           | `int8_t` → °C                  |
 | 26       | Outdoor air temperature          | `(uint8_t / 4) - 22` → °C      |
-| 27       | Return air temperature           | `uint8_t / 4` → °C             |
+| 27       | Return air temperature           | `uint8_t / 10` → °C            |
 | 32       | Compressor frequency             | raw uint8_t → Hz                |
 | 44       | Compressor hours (MSB)           | combined with LSB × 100         |
 | 45       | Compressor hours (LSB) / indoor fan speed | ⚠ aliased — see below |
@@ -117,12 +117,12 @@ The `loop()` method accumulates incoming bytes into `rx_buf_[]` using a two-stat
 
 ### Two-Phase Polling
 
-Each polling cycle (default 30 s) does two serial transactions:
+Each polling cycle (`update_interval`: component default 30 s, the example YAML uses 5 min) does up to two serial transactions:
 
 1. **Status query** → fired immediately in `update()`
-2. **Operational data query** → fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
+2. **Operational data query** → only on cycles where `op_data_interval` (minutes, `0` = never) has elapsed; fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
 
-This avoids sending both requests simultaneously and overlapping their responses. The operational data is always requested (not just when sensors are configured), so `current_temperature` in the HA climate card is always populated.
+This avoids sending both requests simultaneously and overlapping their responses. `current_temperature` in the HA climate card comes from the op-data indoor temperature, so it stays empty if `op_data_interval` is `0`.
 
 ### Combined Control Packet
 
@@ -140,7 +140,7 @@ The protocol has 4 discrete speeds plus auto. ESPHome's built-in `ClimateFanMode
 | "3" (custom)      | 0x02      | Speed 3        |
 | "4" (custom)      | 0x06      | Speed 4        |
 
-On receive, `apply_wire_fan_mode()` maps wire chars `'0'`–`'2'`/`'6'` to custom modes and clears `fan_mode`, or sets `CLIMATE_FAN_AUTO` and clears `custom_fan_mode` for any other value.
+On receive, `parse_status_response()` maps wire chars `'0'`–`'2'`/`'6'` to custom modes via `set_custom_fan_mode_()`, or calls `set_fan_mode_(CLIMATE_FAN_AUTO)` (which clears the custom mode) for any other value. `control()` applies HA's fan/custom-fan choice the same way, then derives the wire value from the resulting custom fan mode, so picking Auto after a numbered speed sends `0x07`.
 
 ### Diagnostic Sensors
 

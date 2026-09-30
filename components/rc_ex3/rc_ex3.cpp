@@ -164,19 +164,15 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   // RSR → operational data handshake / response
   if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
     if (buf[3] == '2') {
-      // Unit not yet ready; echo RSR2 and it will eventually respond RSR1.
-      // Time-bounded (not count-bounded: echoes go out back-to-back, and the
-      // unit can need many round-trips) so a unit that never becomes ready
-      // can't hold the bus.
-      if (millis() - op_data_started_ms_ >= RSR2_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "op-data not ready after %u ms (%u retries); giving up this cycle",
-                 (unsigned) RSR2_TIMEOUT_MS, (unsigned) rsr2_retries_);
-        return;
-      }
+      // Unit not yet ready; echo RSR2 immediately and it will eventually respond RSR1.
+      // Deliberately unbounded: the unit can take well over 15 s (700+ echoes)
+      // to become ready, and abandoning the handshake part-way appeared to
+      // leave the panel ignoring commands.
       rsr2_retries_++;
       send_operational_data_request(true);
     } else if (buf[3] == '1') {
-      ESP_LOGD(TAG, "op-data ready after %u RSR2 retries", (unsigned) rsr2_retries_);
+      ESP_LOGD(TAG, "op-data ready after %u RSR2 retries (%u ms)", (unsigned) rsr2_retries_,
+               (unsigned) (millis() - op_data_started_ms_));
       parse_operational_data(buf, buflen);
     }
     return;

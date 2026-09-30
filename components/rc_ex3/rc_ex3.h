@@ -15,11 +15,6 @@ static const uint8_t POS_RETURN_AIR_TEMP  = 27;
 static const uint8_t POS_COMPRESSOR_HZ    = 32;
 static const uint8_t POS_INDOOR_FAN_SPEED = 45;
 
-// How long to keep echoing RSR2 ("not ready") replies after a page-1 op-data
-// request before giving up for this poll cycle, so an unresponsive unit can't
-// keep the bus busy.
-static const uint32_t RSR2_TIMEOUT_MS     = 15000;
-
 enum class RxState : uint8_t {
   WAITING_FOR_SOF,
   READING_PAYLOAD,

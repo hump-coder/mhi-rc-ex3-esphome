@@ -77,7 +77,7 @@ Requests a binary diagnostic data blob from the unit:
 0x02  RSR10000E8  0x03
 ```
 
-If the unit responds with `RSR2...`, a follow-up `RSR20000E9` is required (echoed for up to `RSR2_TIMEOUT_MS` = 15 s after the page-1 request, so a unit that stays not-ready can't hold the bus; a 5-retry count cap proved too short in practice).  
+If the unit responds with `RSR2...`, a follow-up `RSR20000E9` is required. Keep echoing until `RSR1` arrives — do not cap it: the unit can need 700+ echoes (>15 s), and abandoning the handshake part-way appeared to leave the panel ignoring commands.  
 If the unit responds with `RSR1...`, the rest is hex-encoded binary data.
 
 After stripping the 4-char `RSR1` header, the binary blob is decoded. Confirmed byte positions (from upstream reverse engineering):

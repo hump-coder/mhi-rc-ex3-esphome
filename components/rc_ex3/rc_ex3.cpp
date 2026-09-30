@@ -36,7 +36,7 @@ void RcEx3Climate::setup() {
 }
 
 void RcEx3Climate::update() {
-  send_status_request();
+  status_pending_ = true;
 
   op_data_requested_ = false;
   if (op_data_interval_minutes_ == 0)
@@ -86,15 +86,66 @@ void RcEx3Climate::loop() {
     }
   }
 
-  // Send the op_data request once the status response has been received,
-  // separated by one loop tick to avoid overlapping Tx.
-  if (op_data_pending_) {
+  service_op_data_handshake_();
+  service_command_confirm_();
+  service_tx_();
+}
+
+// ─── Request scheduling ──────────────────────────────────────────────────────
+//
+// Only one request is ever outstanding: a command sent while the unit was
+// still answering a status poll was observed to be silently dropped. Each
+// reply completes the in-flight request and is interpreted according to what
+// was sent. When the bus is free, pending work goes out in priority order:
+// HA command, op-data echo, status poll, op-data start.
+
+void RcEx3Climate::service_tx_() {
+  const uint32_t now = millis();
+
+  if (inflight_ != TxKind::NONE) {
+    if (now - inflight_ms_ < TX_REPLY_TIMEOUT_MS)
+      return;
+    ESP_LOGW(TAG, "no reply to %s within %u ms", tx_kind_name_(inflight_), (unsigned) TX_REPLY_TIMEOUT_MS);
+    finish_tx_();
+  }
+  if (now - bus_idle_ms_ < TX_GAP_MS)
+    return;
+
+  if (command_pending_) {
+    command_pending_ = false;
+    send_command_();
+  } else if (op_data_active_ && op_data_echo_scheduled_) {
+    if (now - op_data_rsr2_rx_ms_ >= op_data_echo_delay_ms_) {
+      op_data_echo_scheduled_ = false;
+      send_operational_data_request(true);
+    }
+  } else if (status_pending_ && !op_data_active_) {
+    // Status polls wait for the op-data handshake to finish rather than interleave with it.
+    status_pending_ = false;
+    send_status_request();
+  } else if (op_data_pending_ && !op_data_active_ && !status_pending_) {
     op_data_pending_ = false;
     send_operational_data_request(false);
   }
+}
 
-  service_op_data_handshake_();
-  service_command_confirm_();
+void RcEx3Climate::begin_tx_(TxKind kind) {
+  inflight_ = kind;
+  inflight_ms_ = millis();
+}
+
+void RcEx3Climate::finish_tx_() {
+  inflight_ = TxKind::NONE;
+  bus_idle_ms_ = millis();
+}
+
+const char *RcEx3Climate::tx_kind_name_(TxKind kind) {
+  switch (kind) {
+    case TxKind::STATUS:  return "status poll";
+    case TxKind::COMMAND: return "command";
+    case TxKind::OP_DATA: return "op-data request";
+    default:              return "nothing";
+  }
 }
 
 // ─── HA control call ─────────────────────────────────────────────────────────
@@ -120,6 +171,15 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   if (call.has_custom_fan_mode())
     this->set_custom_fan_mode_(call.get_custom_fan_mode());
 
+  // Commands carry the full state and are built when sent, so a command still
+  // waiting for the bus simply picks up this change too.
+  if (command_pending_)
+    ESP_LOGD(TAG, "HA change merged into the queued command");
+  command_pending_ = true;
+  this->publish_state();
+}
+
+void RcEx3Climate::send_command_() {
   uint8_t power    = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
   // When powering off, keep the unit's mode so the panel resumes it later.
   uint8_t mode     = climate_mode_to_wire(power ? this->mode : this->last_on_mode_);
@@ -134,33 +194,26 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C)",
            power, mode, fan, temp_wire, this->target_temperature);
   if (op_data_active_)
-    ESP_LOGW(TAG, "tx command during op-data handshake (%u ms in, %u retries)",
+    ESP_LOGD(TAG, "tx command during op-data handshake (%u ms in, %u retries)",
              (unsigned) (millis() - op_data_started_ms_), (unsigned) rsr2_retries_);
 
   send_command(buf, len);
-  // The unit's reply to a command reports its state from before the command
-  // was applied, so treat that reply as an ack only and confirm with a fresh
-  // status poll shortly afterwards. HA keeps the commanded state meanwhile.
+  begin_tx_(TxKind::COMMAND);
+  // The reply to a command reflects the unit's state at reply time, which may
+  // or may not include the command yet, so it's treated as an ack only; a
+  // status poll shortly afterwards reads the applied state. HA keeps the
+  // commanded state meanwhile.
   cmd_sent_ms_ = millis();
-  cmd_ack_pending_ = true;
   cmd_confirm_pending_ = true;
-  this->publish_state();
 }
 
 void RcEx3Climate::service_command_confirm_() {
   const uint32_t now = millis();
-  if (cmd_ack_pending_ && now - cmd_sent_ms_ >= CMD_ACK_TIMEOUT_MS) {
-    ESP_LOGW(TAG, "no reply to command within %u ms", (unsigned) CMD_ACK_TIMEOUT_MS);
-    cmd_ack_pending_ = false;
-  }
-  if (!cmd_confirm_pending_ || now - cmd_sent_ms_ < CMD_CONFIRM_DELAY_MS)
-    return;
-  // Don't interleave a status poll with the op-data handshake; confirm once it ends.
-  if (op_data_active_)
+  if (!cmd_confirm_pending_ || command_pending_ || now - cmd_sent_ms_ < CMD_CONFIRM_DELAY_MS)
     return;
   cmd_confirm_pending_ = false;
   ESP_LOGD(TAG, "confirming command with status poll (%u ms after tx)", (unsigned) (now - cmd_sent_ms_));
-  send_status_request();
+  status_pending_ = true;  // sent once the bus is free (and any op-data handshake has ended)
 }
 
 // ─── Packet dispatch ─────────────────────────────────────────────────────────
@@ -194,23 +247,34 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   ESP_LOGV(TAG, "rx: %s", buf);
 
   const bool is_rssl = buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'S' && buf[3] == 'L';
+  const bool is_rsr  = buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R';
+  const TxKind was = inflight_;
 
-  // First RSSL reply after a command is its ack; RSSL1 acks carry the unit's
-  // pre-command state, so don't apply them.
-  if (is_rssl && cmd_ack_pending_) {
-    cmd_ack_pending_ = false;
+  if (is_rssl && (was == TxKind::STATUS || was == TxKind::COMMAND)) {
+    finish_tx_();
+  } else if (is_rsr && was == TxKind::OP_DATA) {
+    finish_tx_();
+  } else {
+    // Late reply to a timed-out request, or not what we asked for.
+    ESP_LOGW(TAG, "rx while awaiting %s: %s", tx_kind_name_(was), buf);
+    if (is_rssl)
+      return;  // can't tell which state it reflects; never apply it
+  }
+
+  // Reply to a command: an ack only (RSSL11 state at reply time, or RSSL08
+  // when the unit is busy with op-data), never applied.
+  if (is_rssl && was == TxKind::COMMAND) {
     ESP_LOGD(TAG, "command ack after %u ms (not applied): %s", (unsigned) (millis() - cmd_sent_ms_), buf);
     return;
   }
 
-  // RSSL0x → short reply of unknown meaning (seen once, to a command sent mid-op-data)
-  if (is_rssl && buf[4] == '0') {
-    ESP_LOGD(TAG, "rx RSSL0 reply: %s", buf);
+  if (is_rssl && buf[4] != '1') {
+    ESP_LOGD(TAG, "rx non-status RSSL reply to status poll: %s", buf);
     return;
   }
 
   // RSSL1x → climate status; queue op_data only if this update() cycle requested it
-  if (is_rssl && buf[4] == '1') {
+  if (is_rssl) {
     parse_status_response(buf, buflen);
     if (op_data_requested_) {
       op_data_requested_ = false;
@@ -224,7 +288,7 @@ void RcEx3Climate::parse_packet(const char *raw, size_t len) {
   }
 
   // RSR → operational data handshake / response
-  if (buf[0] == 'R' && buf[1] == 'S' && buf[2] == 'R') {
+  if (is_rsr) {
     if (buf[3] == '2') {
       handle_op_data_not_ready_(buf);
     } else if (buf[3] == '1') {
@@ -393,6 +457,7 @@ void RcEx3Climate::send_status_request() {
   for (const char *p = query; *p; p++)
     this->write_byte(static_cast<uint8_t>(*p));
   this->write_byte(0x03);
+  begin_tx_(TxKind::STATUS);
 }
 
 // ─── Op-data handshake ───────────────────────────────────────────────────────
@@ -421,11 +486,7 @@ void RcEx3Climate::handle_op_data_not_ready_(const char *buf) {
   }
   rsr2_retries_++;
   op_data_rsr2_rx_ms_ = now;
-
-  if (op_data_echo_delay_ms_ == 0)
-    send_operational_data_request(true);
-  else
-    op_data_echo_scheduled_ = true;  // sent from loop() once the delay elapses
+  op_data_echo_scheduled_ = true;  // sent by service_tx_() once the delay elapses
 }
 
 void RcEx3Climate::service_op_data_handshake_() {
@@ -433,13 +494,8 @@ void RcEx3Climate::service_op_data_handshake_() {
     return;
   const uint32_t now = millis();
 
-  if (op_data_echo_scheduled_) {
-    if (now - op_data_rsr2_rx_ms_ >= op_data_echo_delay_ms_) {
-      op_data_echo_scheduled_ = false;
-      send_operational_data_request(true);
-    }
-    return;
-  }
+  if (op_data_echo_scheduled_ || inflight_ == TxKind::COMMAND)
+    return;  // echo not yet sent, or waiting behind a command
 
   if (now - op_data_last_progress_ms_ >= OP_DATA_PROGRESS_LOG_MS) {
     op_data_last_progress_ms_ = now;
@@ -471,6 +527,7 @@ void RcEx3Climate::send_operational_data_request(bool second_page) {
   for (const char *p = query; *p; p++)
     this->write_byte(static_cast<uint8_t>(*p));
   this->write_byte(0x03);
+  begin_tx_(TxKind::OP_DATA);
 }
 
 // ─── Encoding helpers ─────────────────────────────────────────────────────────

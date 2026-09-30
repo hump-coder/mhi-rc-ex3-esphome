@@ -22,10 +22,21 @@ static const uint32_t OP_DATA_STALL_MS        = 5000;
 // Tolerance when checking whether op_data_interval has elapsed at update().
 static const uint32_t OP_DATA_INTERVAL_SLACK_MS = 5000;
 
-// After an HA command: stop expecting its ack after CMD_ACK_TIMEOUT_MS, and
-// poll status CMD_CONFIRM_DELAY_MS after sending to read the applied state.
-static const uint32_t CMD_ACK_TIMEOUT_MS      = 1000;
+// Poll status this long after an HA command to read the applied state.
 static const uint32_t CMD_CONFIRM_DELAY_MS    = 2000;
+
+// One request outstanding at a time: give up waiting for a reply after
+// TX_REPLY_TIMEOUT_MS (replies measured at 11-155 ms), and leave TX_GAP_MS
+// between a reply and the next request.
+static const uint32_t TX_REPLY_TIMEOUT_MS     = 500;
+static const uint32_t TX_GAP_MS               = 20;
+
+enum class TxKind : uint8_t {
+  NONE,
+  STATUS,
+  COMMAND,
+  OP_DATA,
+};
 
 enum class RxState : uint8_t {
   WAITING_FOR_SOF,
@@ -55,6 +66,11 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
 
  protected:
   void send_command(const char *payload, size_t len);
+  void send_command_();
+  void service_tx_();
+  void begin_tx_(TxKind kind);
+  void finish_tx_();
+  static const char *tx_kind_name_(TxKind kind);
   void send_status_request();
   void send_operational_data_request(bool second_page = false);
 
@@ -83,7 +99,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t last_op_data_ms_{0};     // op_data_cycle_ms_ of the last successful op-data
   uint32_t op_data_cycle_ms_{0};    // millis() of the update() that requested op-data
   bool op_data_ever_received_{false};
-  bool op_data_pending_{false};
+  bool op_data_pending_{false};     // op-data start waiting for the bus
   bool op_data_requested_{false};  // set in update(); cleared when status response chains op_data
   bool rx_overflowed_{false};
   uint32_t op_data_started_ms_{0};  // millis() of the last page-1 op-data request
@@ -105,8 +121,14 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   bool status_received_{false};  // HA commands are dropped until the first status reply
 
   uint32_t cmd_sent_ms_{0};           // millis() of the latest HA command
-  bool     cmd_ack_pending_{false};   // next RSSL reply is that command's ack
   bool     cmd_confirm_pending_{false};  // status poll due CMD_CONFIRM_DELAY_MS after it
+
+  // Request scheduling (see service_tx_()).
+  TxKind   inflight_{TxKind::NONE};   // request awaiting its reply
+  uint32_t inflight_ms_{0};
+  uint32_t bus_idle_ms_{0};           // millis() the last request completed
+  bool     command_pending_{false};   // HA command waiting for the bus
+  bool     status_pending_{false};    // status poll waiting for the bus
 
   sensor::Sensor *indoor_temperature_sensor_    {nullptr};
   sensor::Sensor *outdoor_temperature_sensor_   {nullptr};

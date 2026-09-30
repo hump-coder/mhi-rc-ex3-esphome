@@ -38,8 +38,11 @@ void RcEx3Climate::setup() {
 void RcEx3Climate::update() {
   status_pending_ = true;
 
-  op_data_requested_ = false;
   if (op_data_interval_minutes_ == 0)
+    return;
+  // An op-data cycle already requested, queued or running covers this update;
+  // requesting again would start a second ~40 s handshake straight after it.
+  if (op_data_requested_ || op_data_pending_ || op_data_active_)
     return;
 
   // Measured from the update() that requested the last successful op-data,
@@ -106,6 +109,12 @@ void RcEx3Climate::service_tx_() {
     if (now - inflight_ms_ < TX_REPLY_TIMEOUT_MS)
       return;
     ESP_LOGW(TAG, "no reply to %s within %u ms", tx_kind_name_(inflight_), (unsigned) TX_REPLY_TIMEOUT_MS);
+    if (inflight_ == TxKind::OP_DATA && op_data_active_ && rsr2_retries_ > 0) {
+      // Abandoning the handshake part-way is what we must avoid: echo again
+      // (after the usual delay) until the stall detector gives up.
+      op_data_rsr2_rx_ms_ = now;
+      op_data_echo_scheduled_ = true;
+    }
     finish_tx_();
   }
   if (now - bus_idle_ms_ < TX_GAP_MS)
@@ -494,6 +503,7 @@ void RcEx3Climate::handle_op_data_not_ready_(const char *buf) {
   }
   rsr2_retries_++;
   op_data_rsr2_rx_ms_ = now;
+  op_data_last_reply_ms_ = now;
   op_data_echo_scheduled_ = true;  // sent by service_tx_() once the delay elapses
 }
 
@@ -502,8 +512,8 @@ void RcEx3Climate::service_op_data_handshake_() {
     return;
   const uint32_t now = millis();
 
-  if (op_data_echo_scheduled_ || inflight_ == TxKind::COMMAND)
-    return;  // echo not yet sent, or waiting behind a command
+  if (inflight_ == TxKind::COMMAND)
+    return;  // waiting behind a command
 
   if (now - op_data_last_progress_ms_ >= OP_DATA_PROGRESS_LOG_MS) {
     op_data_last_progress_ms_ = now;
@@ -511,12 +521,15 @@ void RcEx3Climate::service_op_data_handshake_() {
              (unsigned) (now - op_data_started_ms_));
   }
 
-  // The unit stopped answering: stop waiting (nothing further is sent).
-  if (now - op_data_last_tx_ms_ >= OP_DATA_STALL_MS) {
-    ESP_LOGW(TAG, "op-data handshake stalled: no reply %u ms after last request (%u retries, %u ms in)",
-             (unsigned) (now - op_data_last_tx_ms_), (unsigned) rsr2_retries_,
+  // Lost replies are echoed again (service_tx_()); stop only once the unit has
+  // been silent this long.
+  const uint32_t last_heard = rsr2_retries_ > 0 ? op_data_last_reply_ms_ : op_data_started_ms_;
+  if (now - last_heard >= OP_DATA_STALL_MS) {
+    ESP_LOGW(TAG, "op-data handshake stalled: no reply for %u ms (%u retries, %u ms in)",
+             (unsigned) (now - last_heard), (unsigned) rsr2_retries_,
              (unsigned) (now - op_data_started_ms_));
     op_data_active_ = false;
+    op_data_echo_scheduled_ = false;
   }
 }
 

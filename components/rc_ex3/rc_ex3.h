@@ -109,7 +109,8 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t op_data_echo_delay_ms_{500};  // wait before echoing RSR2; 0 = echo immediately
   bool     op_data_active_{false};     // page-1 sent, RSR1 not yet received
   bool     op_data_echo_scheduled_{false};
-  uint32_t op_data_rsr2_rx_ms_{0};     // millis() of the latest RSR2
+  uint32_t op_data_rsr2_rx_ms_{0};     // echo delay counts from here (latest RSR2, or a lost reply)
+  uint32_t op_data_last_reply_ms_{0};  // millis() of the latest RSR2 actually received
   uint32_t op_data_last_tx_ms_{0};     // millis() of the latest RSR1/RSR2 request
   uint32_t op_data_last_progress_ms_{0};
   uint32_t op_data_reply_min_ms_{0};   // request → reply latency, this cycle

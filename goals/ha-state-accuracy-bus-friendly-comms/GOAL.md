@@ -33,11 +33,11 @@ Answer protocol questions with VERBOSE rx logs on the real unit before changing 
 - [ ] Q3 test: HA script calling set_hvac_mode then set_temperature back-to-back, watch VERBOSE TX/RX log for both commands being applied
 
 ## 3. State sync after HA commands
-Status: planned
+Status: done
 
 Make HA reflect the unit's real state quickly after HA-originated changes, with minimal extra bus traffic. See DESIGN.md §Findings B.
 
-- [ ] Single confirm status poll a few seconds after each sent command (delay from Q1/Q3); reset the regular poll timer so it doesn't add traffic
+- [x] Single confirm status poll a few seconds after each sent command (delay from Q1/Q3); reset the regular poll timer so it doesn't add traffic
 - [x] Ignore/stale-guard status responses to requests sent before a pending command so they can't revert the optimistic state
 - [x] Poll once shortly after boot (don't wait for the first 5min interval)
 

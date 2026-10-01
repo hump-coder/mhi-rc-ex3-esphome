@@ -127,11 +127,15 @@ void RcEx3Climate::service_tx_() {
       // (after the usual delay) until the stall detector gives up.
       op_data_rsr2_rx_ms_ = now;
       op_data_echo_scheduled_ = true;
-    } else if (inflight_ == TxKind::COMMAND && cmd_retry_left_ && !command_pending_) {
-      // Commands carry the full state, so resending is harmless. (A newer
-      // queued command covers this one and keeps the retry for itself.)
-      cmd_retry_left_ = false;
-      command_pending_ = true;
+    } else if (inflight_ == TxKind::COMMAND && (command_pending_ || cmd_retry_left_)) {
+      // Commands are rebuilt from the current state, so resending is harmless.
+      // (A newer queued command covers this one and keeps the retry for
+      // itself.) Either way the resend must also carry this command's fields.
+      cmd_fields_ |= cmd_inflight_fields_;
+      if (!command_pending_) {
+        cmd_retry_left_ = false;
+        command_pending_ = true;
+      }
     } else if (inflight_ == TxKind::STATUS && status_retry_left_ && !status_pending_) {
       status_retry_left_ = false;
       status_pending_ = true;
@@ -181,9 +185,8 @@ const char *RcEx3Climate::tx_kind_name_(TxKind kind) {
 // ─── HA control call ─────────────────────────────────────────────────────────
 
 void RcEx3Climate::control(const climate::ClimateCall &call) {
-  // Every command carries the full state (power, mode, fan, setpoint). Until the
-  // first status reply we'd fill the unset fields with defaults and silently
-  // change the unit, so drop the command instead.
+  // Every command carries the setpoint. Until the first status reply we'd send
+  // a default and silently change the unit, so drop the command instead.
   if (!status_received_) {
     ESP_LOGW(TAG, "ignoring HA command: unit state not yet read");
     this->publish_state();  // revert HA to the last known state
@@ -191,8 +194,10 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
   }
   if (call.get_mode().has_value()) {
     this->mode = *call.get_mode();
+    // Off is power only: the unit keeps its mode for the next power-on.
+    cmd_fields_ |= CMD_FIELD_POWER;
     if (this->mode != climate::CLIMATE_MODE_OFF)
-      this->last_on_mode_ = this->mode;
+      cmd_fields_ |= CMD_FIELD_MODE;
   }
   if (call.get_target_temperature().has_value()) {
     // Store what will actually be sent: 0.5 °C steps within the unit's range.
@@ -200,13 +205,17 @@ void RcEx3Climate::control(const climate::ClimateCall &call) {
     if (std::isfinite(t))
       this->target_temperature = roundf(std::min(std::max(t, TEMP_MIN_C), TEMP_MAX_C) * 2.0f) / 2.0f;
   }
-  if (call.get_fan_mode().has_value())
+  if (call.get_fan_mode().has_value()) {
     this->set_fan_mode_(*call.get_fan_mode());  // clears any custom speed
-  if (call.has_custom_fan_mode())
+    cmd_fields_ |= CMD_FIELD_FAN;
+  }
+  if (call.has_custom_fan_mode()) {
     this->set_custom_fan_mode_(call.get_custom_fan_mode());
+    cmd_fields_ |= CMD_FIELD_FAN;
+  }
 
-  // Commands carry the full state and are built when sent, so a command still
-  // waiting for the bus simply picks up this change too.
+  // Commands are built when sent, so a command still waiting for the bus
+  // simply picks up this change too.
   if (command_pending_)
     ESP_LOGD(TAG, "HA change merged into the queued command");
   if (!raw_command_.empty()) {
@@ -235,6 +244,7 @@ void RcEx3Climate::send_raw_command(const std::string &body) {
   if (command_pending_)
     ESP_LOGW(TAG, "raw command replaces the queued HA command");
   raw_command_ = body;
+  cmd_fields_ = 0;
   command_pending_ = true;
   cmd_retry_left_ = false;  // a resend would rebuild the HA state, not this body
 }
@@ -244,16 +254,22 @@ void RcEx3Climate::send_command_() {
     ESP_LOGI(TAG, "tx raw → %s", raw_command_.c_str());
     send_command(raw_command_.c_str(), raw_command_.size());
     raw_command_.clear();
+    cmd_inflight_fields_ = 0;
     begin_tx_(TxKind::COMMAND);
     cmd_sent_ms_ = millis();
     cmd_confirm_pending_ = true;
     return;
   }
 
-  uint8_t power   = (this->mode == climate::CLIMATE_MODE_OFF) ? 0 : 1;
-  // When powering off, keep the unit's mode so the panel resumes it later.
-  uint8_t mode     = climate_mode_to_wire(power ? this->mode : this->last_on_mode_);
-  uint8_t fan      = custom_fan_mode_to_wire(this->get_custom_fan_mode());
+  // Fields HA didn't change go out as FF so they can't revert a panel change
+  // made since the last poll.
+  const uint8_t fields = cmd_fields_;
+  cmd_fields_ = 0;
+  cmd_inflight_fields_ = fields;
+  const bool off = this->mode == climate::CLIMATE_MODE_OFF;
+  uint8_t power = (fields & CMD_FIELD_POWER) ? (off ? 0 : 1) : 0xFF;
+  uint8_t mode  = (fields & CMD_FIELD_MODE) && !off ? climate_mode_to_wire(this->mode) : 0xFF;
+  uint8_t fan   = (fields & CMD_FIELD_FAN) ? custom_fan_mode_to_wire(this->get_custom_fan_mode()) : 0xFF;
   const float temp_c = std::isfinite(this->target_temperature)
                            ? std::min(std::max(this->target_temperature, TEMP_MIN_C), TEMP_MAX_C)
                            : 22.0f;
@@ -261,10 +277,10 @@ void RcEx3Climate::send_command_() {
 
   char buf[64];
   size_t len = snprintf(buf, sizeof(buf),
-    "RSSL13FF0001%.2x02%.2x03%.2x04FF0503%.2x06FF0FFF43FF",
+    "RSSL13FF0001%.2X02%.2X03%.2X04FF0503%.2X06FF0FFF43FF",
     power, mode, fan, temp_wire);
 
-  ESP_LOGI(TAG, "tx → power=%d mode=%d fan=0x%02x temp_wire=%d (%.1f°C)",
+  ESP_LOGI(TAG, "tx → power=0x%02X mode=0x%02X fan=0x%02X temp_wire=%d (%.1f°C) (FF = unchanged)",
            power, mode, fan, temp_wire, this->target_temperature);
   if (op_data_active_)
     ESP_LOGD(TAG, "tx command during op-data handshake (%u ms in, %u retries)",
@@ -465,9 +481,6 @@ bool RcEx3Climate::parse_status_response(const char *buf, size_t len) {
   }
 
   this->mode = (pwr_c == '1') ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
-  // The unit reports its mode even while off; remember it so an HA command
-  // sent while off (power=0) doesn't overwrite it with a default.
-  this->last_on_mode_ = wire_to_climate_mode(mode_c - '0');
   const char *custom_fan = wire_to_custom_fan_mode(fan_c);
   if (custom_fan != nullptr)
     this->set_custom_fan_mode_(custom_fan);

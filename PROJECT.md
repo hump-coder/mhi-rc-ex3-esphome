@@ -50,11 +50,11 @@ Where each `[field]` is a 2-char lowercase hex byte:
 | Field  | Values                                        |
 |--------|-----------------------------------------------|
 | `pwr`  | `00`=off, `01`=on                             |
-| `mode` | `00`=auto, `01`=dry, `02`=cool, `03`=fan, `04`=heat (when `pwr`=`00`, the last on-mode is sent so the unit resumes it) |
+| `mode` | `00`=auto, `01`=dry, `02`=cool, `03`=fan, `04`=heat |
 | `fan`  | `00`=spd1, `01`=spd2, `02`=spd3, `06`=spd4, `07`=auto |
 | `temp` | `actual_°C × 2` as hex (e.g. 22°C → `0x2C`)  |
 
-**`FF` fields (measured on a real unit):** `FF` in the `pwr`, `mode` or `fan` field leaves that setting unchanged (setpoint-only, fan-only and mode-only commands each changed just that field; `pwr`=`FF` did not turn an off unit on). The setpoint field can't be left out: a command with `05FF` in place of `0503[temp]` was either rejected with `RSSL08` or acked and silently ignored, including its valid fields. The mode can be changed while the unit is off. The firmware currently still sends all four fields.
+**`FF` fields (measured on a real unit):** `FF` in the `pwr`, `mode` or `fan` field leaves that setting unchanged (setpoint-only, fan-only and mode-only commands each changed just that field; `pwr`=`FF` did not turn an off unit on). The setpoint field can't be left out: a command with `05FF` in place of `0503[temp]` was either rejected with `RSSL08` or acked and silently ignored, including its valid fields. The mode can be changed while the unit is off. The firmware sends `FF` for every `pwr`/`mode`/`fan` field HA didn't change (power-off is `pwr`=`00` with `mode`=`FF`), so an HA command can't revert a panel change made since the last poll. The setpoint is always sent, so a panel setpoint change made since the last poll is still overwritten.
 
 **Command replies (measured on a real unit):**
 
@@ -79,7 +79,7 @@ RSSL 11 FF00  01 10  02 12  03 11  04 11  05 13 31  06 11  0F 10
               off    cool   spd2          0x31 → 24.5 °C
 ```
 
-Most values are `1` + the actual value; the setpoint field `05` is `13` + temperature × 2. The mode is reported even while the unit is off, and the firmware remembers it so commands sent while off keep it.
+Most values are `1` + the actual value; the setpoint field `05` is `13` + temperature × 2. The mode is reported even while the unit is off.
 
 Response (filtered ASCII, positions 0-indexed from first `R`):
 
@@ -153,7 +153,7 @@ This avoids sending both requests simultaneously and overlapping their responses
 
 ### Request scheduling
 
-Only one request (status query, command, op-data request/echo) is outstanding at a time. Each reply completes the in-flight request and is interpreted according to what was sent; an RSSL reply that doesn't match an in-flight status query or command is logged and never applied. A reply is given up on after 500 ms (measured replies: 11–155 ms), and 20 ms is left between a reply and the next request. An unanswered command or status query is resent once (unless a newer one is already queued); commands carry the full state, so a resend is harmless. The first status query goes out at boot and is repeated every 5 s until a valid reply arrives, since HA commands are dropped until then. When the bus is free, pending work goes out in priority order: HA command, op-data echo, status query, op-data start. Status queries (including command confirmations) wait for an op-data handshake to finish; commands are sent mid-handshake, which the unit handles. A lost op-data reply mid-handshake is echoed again after the usual delay; the handshake is only abandoned once the unit has sent nothing for 5 s. `update()` doesn't request a new op-data cycle while one is already requested, queued or running.
+Only one request (status query, command, op-data request/echo) is outstanding at a time. Each reply completes the in-flight request and is interpreted according to what was sent; an RSSL reply that doesn't match an in-flight status query or command is logged and never applied. A reply is given up on after 500 ms (measured replies: 11–155 ms), and 20 ms is left between a reply and the next request. An unanswered command or status query is resent once (unless a newer one is already queued); commands are rebuilt from the current state with the same changed fields, so a resend is harmless. The first status query goes out at boot and is repeated every 5 s until a valid reply arrives, since HA commands are dropped until then. When the bus is free, pending work goes out in priority order: HA command, op-data echo, status query, op-data start. Status queries (including command confirmations) wait for an op-data handshake to finish; commands are sent mid-handshake, which the unit handles. A lost op-data reply mid-handshake is echoed again after the usual delay; the handshake is only abandoned once the unit has sent nothing for 5 s. `update()` doesn't request a new op-data cycle while one is already requested, queued or running.
 
 While an HA command is queued or awaiting its confirming status query, status replies are not applied (the command is built from the same fields, and a reply shortly after a command may predate it). Status replies with unexpected power/mode/setpoint bytes, or a setpoint outside 10–35 °C (the additive checksum misses swapped characters, e.g. `2C` ↔ `C2`), are ignored, re-polled once, and don't start an op-data cycle. HA setpoints are rounded to 0.5 °C and clamped to 16–30 °C before being stored and sent; the setpoint is clamped again when a command is built.
 

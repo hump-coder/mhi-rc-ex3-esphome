@@ -128,10 +128,16 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t op_data_reply_min_ms_{0};   // request → reply latency, this cycle
   uint32_t op_data_reply_max_ms_{0};
 
-  // Mode to send alongside power=off so the unit keeps its mode for the next
-  // power-on. Updated from every status reply (on or off) and from HA.
-  climate::ClimateMode last_on_mode_{climate::CLIMATE_MODE_HEAT_COOL};
   bool status_received_{false};  // HA commands are dropped until the first status reply
+
+  // Command fields HA changed (CMD_FIELD_*). The rest are sent as FF ("leave
+  // unchanged") so HA can't revert a panel change it hasn't polled yet; the
+  // setpoint can't be left out and is always sent.
+  static const uint8_t CMD_FIELD_POWER = 1 << 0;
+  static const uint8_t CMD_FIELD_MODE  = 1 << 1;
+  static const uint8_t CMD_FIELD_FAN   = 1 << 2;
+  uint8_t cmd_fields_{0};           // for the queued command
+  uint8_t cmd_inflight_fields_{0};  // carried by the command awaiting its ack
 
   uint32_t cmd_sent_ms_{0};           // millis() of the latest HA command
   bool     cmd_retry_left_{false};    // resend the command once if it gets no ack

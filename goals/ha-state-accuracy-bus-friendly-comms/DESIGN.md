@@ -153,3 +153,16 @@ Consequence for phase 4: send `FF` for power/mode/fan that HA didn't change,
 but always send the setpoint. A panel setpoint change between polls can still
 be overwritten; panel power/mode/fan changes can't. Power-off can send mode
 `FF` instead of `last_on_mode_`, removing the pre-first-poll `mode=00` case.
+
+### Phase 4: FF for fields HA didn't change
+`control()` records which fields the call touched (`cmd_fields_`): a mode
+change sets power, and also sets mode unless the new mode is OFF; any fan or
+custom fan change sets fan. `send_command_()` sends `FF` for every unset
+power/mode/fan field, and always sends the setpoint. Changes merged into a
+queued command add their fields to it. A timed-out command's fields
+(`cmd_inflight_fields_`) carry over to its resend, or to the newer queued
+command that replaces it. Power-off is now `pwr=00 mode=FF`, so
+`last_on_mode_` is gone, along with the pre-first-poll `mode=00` case (A3).
+Hex fields are now uppercase, matching the Q2 raw tests and the status query.
+Limitation: a panel setpoint change made since the last poll is still
+overwritten by any HA command.

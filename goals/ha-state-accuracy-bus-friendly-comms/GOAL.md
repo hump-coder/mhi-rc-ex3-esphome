@@ -47,6 +47,6 @@ Status: planned
 Keep the panel usable: one outstanding request at a time, bounded retries, no redundant writes. See DESIGN.md §Findings C.
 
 - [x] TX gate: one outstanding request at a time with response timeout; queue control/status/op-data behind it
-- [ ] If Q2 confirms, send FF for unchanged fields in RSSL13 so HA can't clobber a concurrent panel change
+- [x] If Q2 confirms, send FF for unchanged fields in RSSL13 so HA can't clobber a concurrent panel change
 - [ ] If Q3 shows back-to-back RSSL13 is dropped/garbled: enforce a minimum gap after each command reply before the next command (changes arriving in the gap merge into it)
 - [ ] Skip op-data when no diagnostic sensors are configured; make confirm-poll delay (and inter-command gap, if added) YAML-configurable

@@ -30,13 +30,13 @@ Answer protocol questions with VERBOSE rx logs on the real unit before changing 
 - [x] Q2: Does FF in an RSSL13 field mean "leave unchanged" (e.g. send only temp)
 - [ ] Q3: How long does the panel stay in "communicating" lock-out after one request/response, and what does rapid back-to-back RSSL13 do (dropped? garbled?)
 - [x] Q4: Time from boot to first status publish (PollingComponent first update timing with 5min interval)
+- [ ] Q3 test: HA script calling set_hvac_mode then set_temperature back-to-back, watch VERBOSE TX/RX log for both commands being applied
 
 ## 3. State sync after HA commands
 Status: planned
 
 Make HA reflect the unit's real state quickly after HA-originated changes, with minimal extra bus traffic. See DESIGN.md §Findings B.
 
-- [ ] Coalesce rapid HA calls (e.g. temp +/- clicks) into one RSSL13 after ~1s quiet period
 - [ ] Single confirm status poll a few seconds after each sent command (delay from Q1/Q3); reset the regular poll timer so it doesn't add traffic
 - [x] Ignore/stale-guard status responses to requests sent before a pending command so they can't revert the optimistic state
 - [x] Poll once shortly after boot (don't wait for the first 5min interval)
@@ -48,4 +48,5 @@ Keep the panel usable: one outstanding request at a time, bounded retries, no re
 
 - [x] TX gate: one outstanding request at a time with response timeout; queue control/status/op-data behind it
 - [ ] If Q2 confirms, send FF for unchanged fields in RSSL13 so HA can't clobber a concurrent panel change
-- [ ] Skip op-data when no diagnostic sensors are configured; make confirm-poll delay and quiet period YAML-configurable
+- [ ] If Q3 shows back-to-back RSSL13 is dropped/garbled: enforce a minimum gap after each command reply before the next command (changes arriving in the gap merge into it)
+- [ ] Skip op-data when no diagnostic sensors are configured; make confirm-poll delay (and inter-command gap, if added) YAML-configurable

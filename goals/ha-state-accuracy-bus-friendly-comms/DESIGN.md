@@ -96,7 +96,16 @@ Code facts:
   the defaults set in `setup()` (OFF / 22 °C) until then.
 
 Planned direction (phase 3):
-- Merge rapid calls into one send after a ~1 s quiet period.
+- ~~Merge rapid calls into one send after a ~1 s quiet period.~~ Dropped
+  (2026-10-01). Hardware logs show a burst of +/- clicks in HA producing a
+  single `RSSL13`. The HA frontend debounces the thermostat controls before
+  calling `climate.set_temperature`. The TX gate also builds the command at
+  send time, so changes that arrive while a command is queued merge into it.
+  A device-side debounce would add latency to every command for no gain.
+  What's left is non-debounced callers (automations/scripts/API) making two
+  service calls back-to-back. The second command then goes out right after the
+  first one's reply. That's a Q3 question. If Q3 shows the panel mishandles
+  it, phase 4 adds a minimum gap after each command reply instead.
 - Do one confirmation poll a few seconds after each send, and reschedule the
   regular poll so there's no net extra traffic.
 - Ignore status replies to requests sent before a pending command.

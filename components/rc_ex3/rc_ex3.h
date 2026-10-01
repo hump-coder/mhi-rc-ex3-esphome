@@ -129,6 +129,7 @@ class RcEx3Climate : public climate::Climate, public uart::UARTDevice, public Po
   uint32_t op_data_reply_max_ms_{0};
 
   bool status_received_{false};  // HA commands are dropped until the first status reply
+  uint32_t last_status_applied_ms_{0};  // update() skips its poll if this is recent
 
   // Command fields HA changed (CMD_FIELD_*). The rest are sent as FF ("leave
   // unchanged") so HA can't revert a panel change it hasn't polled yet; the

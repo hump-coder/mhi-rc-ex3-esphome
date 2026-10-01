@@ -39,8 +39,21 @@ void RcEx3Climate::setup() {
 }
 
 void RcEx3Climate::update() {
-  status_pending_ = true;
-  status_retry_left_ = true;
+  // A command's confirming poll reads the state anyway: skip this poll if one
+  // is still to come, or if a status was applied within half an interval (so
+  // confirmations add no net traffic, and the state is never more than ~1.5
+  // intervals old).
+  const uint32_t now = millis();
+  const bool confirm_due = command_pending_ || cmd_confirm_pending_;
+  const bool status_fresh =
+      status_received_ && (confirm_due || now - last_status_applied_ms_ < this->get_update_interval() / 2);
+  if (status_fresh) {
+    ESP_LOGD(TAG, "status poll skipped: %s", confirm_due ? "command confirmation due"
+                                                       : "status read recently");
+  } else {
+    status_pending_ = true;
+    status_retry_left_ = true;
+  }
 
   if (op_data_interval_minutes_ == 0)
     return;
@@ -53,10 +66,15 @@ void RcEx3Climate::update() {
   // with slack for scheduler jitter, so op_data_interval: 5 with a 5 min
   // update_interval really runs every cycle (the ~40 s handshake no longer
   // pushes it to every other cycle).
-  const uint32_t now = millis();
   const uint32_t interval_ms = op_data_interval_minutes_ * 60000UL;  // >= 60 s > slack
   if (!op_data_ever_received_ || (now - last_op_data_ms_) >= interval_ms - OP_DATA_INTERVAL_SLACK_MS) {
-    op_data_requested_ = true;
+    // Normally chained to the status reply; with no poll this cycle, queue it
+    // directly (a pending confirmation's reply still chains it, so the
+    // confirmation isn't held up behind a ~40 s handshake).
+    if (status_fresh && !confirm_due)
+      op_data_pending_ = true;
+    else
+      op_data_requested_ = true;
     op_data_cycle_ms_ = now;
   }
 }
@@ -479,6 +497,7 @@ bool RcEx3Climate::parse_status_response(const char *buf, size_t len) {
     ESP_LOGD(TAG, "status not applied: HA command awaiting confirmation");
     return true;
   }
+  last_status_applied_ms_ = millis();
 
   this->mode = (pwr_c == '1') ? wire_to_climate_mode(mode_c - '0') : climate::CLIMATE_MODE_OFF;
   const char *custom_fan = wire_to_custom_fan_mode(fan_c);

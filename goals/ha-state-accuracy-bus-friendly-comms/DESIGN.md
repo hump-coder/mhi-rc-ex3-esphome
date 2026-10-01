@@ -166,3 +166,15 @@ command that replaces it. Power-off is now `pwr=00 mode=FF`, so
 Hex fields are now uppercase, matching the Q2 raw tests and the status query.
 Limitation: a panel setpoint change made since the last poll is still
 overwritten by any HA command.
+
+### Phase 3: confirmation poll without extra traffic
+The confirming poll (`CMD_CONFIRM_DELAY_MS` = 2 s after each command) was
+already in place. To stop it adding traffic, `update()` skips its regular
+status poll when a confirmation is still due (`command_pending_` /
+`cmd_confirm_pending_`) or a status reply was applied less than half an
+`update_interval` ago. The state is therefore never more than ~1.5 intervals
+old. If op-data is due on a skipped cycle, it is queued directly. When a
+confirmation is due, op-data is chained to the confirmation's reply instead,
+so the confirmation isn't held up behind the ~40 s handshake. Restarting
+ESPHome's poller was rejected: frequent commands would keep postponing
+`update()` and starve op-data. The 2 s delay stays a placeholder until Q3.

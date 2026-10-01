@@ -146,8 +146,8 @@ The `loop()` method accumulates incoming bytes into `rx_buf_[]` using a two-stat
 
 Each polling cycle (`update_interval`: component default 30 s, the example YAML uses 5 min) does up to two serial transactions:
 
-1. **Status query** → fired immediately in `update()`
-2. **Operational data query** → only on cycles where `op_data_interval` (minutes, 0–1440, `0` = never) has elapsed since the `update()` that requested the last successful op-data (with 5 s slack, so a 5 min interval with a 5 min `update_interval` runs every cycle despite the ~40 s handshake); fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag)
+1. **Status query** → queued in `update()`, unless an HA command's confirming status query is still to come or a status reply was applied less than half an `update_interval` ago (a recent confirmation). This way confirmations add no net traffic, and the state is never more than ~1.5 intervals old
+2. **Operational data query** → only on cycles where `op_data_interval` (minutes, 0–1440, `0` = never) has elapsed since the `update()` that requested the last successful op-data (with 5 s slack, so a 5 min interval with a 5 min `update_interval` runs every cycle despite the ~40 s handshake); fired on the next `loop()` tick after the status response arrives (via `op_data_pending_` flag), or queued directly when the cycle's status query was skipped
 
 This avoids sending both requests simultaneously and overlapping their responses. `current_temperature` in the HA climate card comes from the op-data indoor temperature, so it stays empty if `op_data_interval` is `0`.
 
